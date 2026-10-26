@@ -1,0 +1,21 @@
+/bin/
+/dist/
+/build-out/
+/agent-tools/
+*.exe
+*.test
+.DS_Store
+
+# Frontend tooling
+**/node_modules/
+**/.vite/
+
+# MyGo / Wails local build output
+**/.mygo/
+gui-wails/bin/
+gui-mygo/build/
+
+# Agent state and demo caches (node keys live here — never commit)
+**/.tailfile-state/
+**/tailscaled.state
+*.tsbuildinfo

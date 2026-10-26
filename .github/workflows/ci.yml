@@ -1,0 +1,87 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  agent:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - name: Test and cross-compile the agent
+        working-directory: agent
+        env:
+          GOWORK: "off"
+        run: |
+          go test -count=1 -race -timeout 180s .
+          CGO_ENABLED=0 go build -o /tmp/tailfile-agent ./cmd/tailfile-agent
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-agent.exe ./cmd/tailfile-agent
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/tailfile-agent-darwin ./cmd/tailfile-agent
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/tailfile-agent-darwin-arm64 ./cmd/tailfile-agent
+
+  mygo:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - name: Test and cross-compile MyGo
+        working-directory: gui-mygo
+        env:
+          GOWORK: "off"
+        run: |
+          go test -count=1 -timeout 180s .
+          CGO_ENABLED=0 go build -o /tmp/tailfile-mygo .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-mygo.exe .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/tailfile-mygo-darwin .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/tailfile-mygo-darwin-arm64 .
+
+  wails-server:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build the frontend
+        working-directory: gui-wails/frontend
+        run: npm ci && npm run build
+      - name: Cross-compile Wails server mode
+        working-directory: gui-wails
+        env:
+          GOWORK: "off"
+        run: |
+          CGO_ENABLED=0 go build -tags server -o /tmp/tailfile-wails .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags server -o /tmp/tailfile-wails.exe .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -tags server -o /tmp/tailfile-wails-darwin .
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -tags server -o /tmp/tailfile-wails-darwin-arm64 .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-wails-desktop.exe .
+
+  wails-desktop-linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: GTK 4 and WebKitGTK
+        run: sudo apt-get update && sudo apt-get install -y gcc pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
+      - name: Build the frontend
+        working-directory: gui-wails/frontend
+        run: npm ci && npm run build
+      - name: Linux desktop binary
+        working-directory: gui-wails
+        env:
+          GOWORK: "off"
+        run: CGO_ENABLED=1 go build -o /tmp/tailfile-wails-desktop .
