@@ -2,19 +2,21 @@
 
 Both shells implement the same agent calls: node tree, file list, text / image / PDF preview, push and pull paste, progress, cancel, resume, mkdir, rename, import of a local path, and cache plus reveal. The agent is shared. The difference is the window.
 
-Measured on Ubuntu 24.04, linux/amd64, Go 1.27.3, Wails v3.0.0, MyGo v0.6.4. Sizes are the binaries `scripts/build-all.sh` writes under `build-out/` (that directory is gitignored). Re-run the script before trusting a number you did not just produce. The figures below are from the run that produced this spike.
+Measured on Ubuntu 24.04, linux/amd64, Go 1.27.3, Wails v3.0.0, MyGo v0.6.4. Sizes are the binaries `scripts/build-all.sh` writes under `build-out/` (that directory is gitignored). Re-run the script before trusting a number you did not just produce. The figures below are from the hardening pass.
+
+Both GUIs preview a file as soon as it is selected. Neither had a way to turn that off. Each now has a Preview on / Preview off control, default on, persisted in the browser (`localStorage` key `tailfile.preview`) or, for MyGo, in `UserConfigDir/tailfile/mygo-preview`. The localhost API requires the per-start bearer, so image and PDF bytes are fetched with `Authorization` instead of a bare URL.
 
 ## What was actually built and run
 
 | Target | Built here | Run here |
 | --- | --- | --- |
 | Agent tests, including `-race` | yes | yes |
-| Agent linux, windows, darwin amd64, darwin arm64 | yes, `CGO_ENABLED=0` | linux binary, demo mode only |
+| Agent linux amd64 and arm64, windows amd64 and arm64, darwin amd64, darwin arm64 | yes, `CGO_ENABLED=0` | linux/amd64 binary, demo mode only |
 | MyGo test (`ui.NewTester`) | yes | yes, no display |
-| MyGo linux, windows, darwin amd64, darwin arm64 | yes, `CGO_ENABLED=0` | linux process stayed up 10s under Xvfb. It logged `native UI draws without the GPU`. Widgets were not clicked. |
-| Wails server linux, windows, darwin amd64, darwin arm64 | yes, `-tags server`, pure Go | linux server, in Chrome, against `-demo` |
+| MyGo linux amd64 and arm64, windows amd64 and arm64, darwin amd64, darwin arm64 | yes, `CGO_ENABLED=0` | linux/amd64 process stayed up 10s under Xvfb before this pass. It logged `native UI draws without the GPU`. Widgets were not clicked. |
+| Wails server linux amd64 and arm64, windows amd64 and arm64, darwin amd64, darwin arm64 | yes, `-tags server`, pure Go | linux/amd64 server, in Chrome, against `-demo` before this pass |
 | Wails desktop linux (GTK 4.14.5, WebKitGTK 2.52.6) | yes, cgo | process stayed up under Xvfb until killed. Widgets were not clicked. libEGL warned that DRI3 was missing. |
-| Wails desktop windows | yes, `CGO_ENABLED=0` cross-compile | no |
+| Wails desktop windows amd64 and arm64 | yes, `CGO_ENABLED=0` cross-compile | no |
 | Wails desktop darwin | no | clang on Linux rejects `-arch` for the Cocoa/WebKit cgo |
 | Real tsnet login, two physical machines | no | no auth key in this environment |
 | Windows, macOS, Hyprland GUI | no | you have to do this |
@@ -25,12 +27,12 @@ A green cross-compile is not a working window. WebView2, Cocoa, and Hyprland wer
 
 | Piece | Lines |
 | --- | --- |
-| `agent/` production Go | 4070 |
-| `agent/` tests | 488 |
-| `gui-mygo/` production Go | 960 |
+| `agent/` production Go | 4972 |
+| `agent/` tests | 1046 |
+| `gui-mygo/` production Go | 1067 |
 | `gui-mygo/` test | 28 |
-| `gui-wails/` Go (window, drop, embed) | 118 |
-| `gui-wails/frontend/src` TypeScript and CSS | 1130 |
+| `gui-wails/` Go (window, drop, token inject) | 179 |
+| `gui-wails/frontend/src` TypeScript and CSS | 1251 |
 
 Wails puts the file manager in the web UI, so the Go side stays a shell. MyGo puts it in Go, next to the widget calls. The agent dominates either way.
 
@@ -40,30 +42,36 @@ Agent, stripped of nothing, tsnet linked in:
 
 | OS | bytes |
 | --- | --- |
-| linux/amd64 | 33083415 |
-| windows/amd64 | 33081856 |
-| darwin/amd64 | 32672944 |
-| darwin/arm64 | 30768306 |
+| linux/amd64 | 33159793 |
+| linux/arm64 | 30898170 |
+| windows/amd64 | 33159168 |
+| windows/arm64 | 30593024 |
+| darwin/amd64 | 32745520 |
+| darwin/arm64 | 30820818 |
 
-MyGo (pure Go, tsnet not linked; it is only an HTTP client):
-
-| OS | bytes |
-| --- | --- |
-| linux/amd64 | 35691854 |
-| windows/amd64 | 36009984 |
-| darwin/amd64 | 35684544 |
-| darwin/arm64 | 33465298 |
-
-Wails server mode (pure Go, assets embedded, tsnet not linked):
+MyGo (pure Go, tsnet not linked; it is only an HTTP client of the local agent):
 
 | OS | bytes |
 | --- | --- |
-| linux/amd64 | 19484910 |
-| windows/amd64 | 20449280 |
-| darwin/amd64 | 19748320 |
-| darwin/arm64 | 18788498 |
+| linux/amd64 | 35704864 |
+| linux/arm64 | 33175516 |
+| windows/amd64 | 36030464 |
+| windows/arm64 | 33138176 |
+| darwin/amd64 | 35697600 |
+| darwin/arm64 | 33499138 |
 
-Wails desktop: linux/amd64 `19269168` bytes; windows/amd64 `20054016` bytes, not executed. Darwin desktop did not link.
+Wails server mode (pure Go, assets embedded, tsnet not linked; it only imports the token-path helper):
+
+| OS | bytes |
+| --- | --- |
+| linux/amd64 | 19507668 |
+| linux/arm64 | 18326559 |
+| windows/amd64 | 20473344 |
+| windows/arm64 | 19120128 |
+| darwin/amd64 | 19774256 |
+| darwin/arm64 | 18806354 |
+
+Wails desktop: linux/amd64 `19284568` bytes; windows/amd64 `20067840` bytes; windows/arm64 `18754560` bytes. None of the desktop binaries were executed in this pass. Darwin desktop did not link.
 
 MyGo is larger than the Wails shell because the UI toolkit is in the binary. The agent is the large piece on a machine that runs both.
 
@@ -120,6 +128,8 @@ Build friction: one `go build`, no cgo, no Node. The highest friction is the Go 
 | Drop files in from the OS | Yes, desktop window only. Paths arrive in `WindowFilesDropped`. | Yes, `DroppedFiles` on the list. |
 | Drag a file out to the OS file manager | No API found. Cache the file, copy the path, or Reveal. | Yes, `transfer.FileData` of an existing cached path. No promised-file / virtual file drag. |
 | Typed local path import | Yes | Yes |
+
+The drag-out cache is the OS user cache directory plus `tailfile` (mode `0700`), with `0600` files named from a hash of the node and the remote path. It is not the agent state directory.
 
 Neither drag was performed against Explorer, Finder, or a Wayland portal in this VM. Treat the MyGo drag-out as "the API is there and typechecks," and confirm it on each OS, especially Wayland, where portal drag-and-drop is the usual failure.
 

@@ -4,7 +4,7 @@ import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 GlobalWorkerOptions.workerSrc = workerUrl;
 
-export function PdfView({ url }: { url: string }) {
+export function PdfView({ data }: { data: Uint8Array }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pages, setPages] = useState(0);
   const [err, setErr] = useState("");
@@ -17,7 +17,7 @@ export function PdfView({ url }: { url: string }) {
     setPages(0);
     (async () => {
       try {
-        const pdf = await getDocument({ url, disableRange: false }).promise;
+        const pdf = await getDocument({ data: data.slice(), disableRange: true }).promise;
         if (cancelled) return;
         setPages(pdf.numPages);
         const page = await pdf.getPage(1);
@@ -38,7 +38,7 @@ export function PdfView({ url }: { url: string }) {
     return () => {
       cancelled = true;
     };
-  }, [url]);
+  }, [data]);
 
   return (
     <div className="tf-pdf">

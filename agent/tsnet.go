@@ -12,13 +12,26 @@ import (
 
 	"tailscale.com/client/local"
 	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
 func runTailnet(ctx context.Context, cfg Config) error {
 	roots := Roots{Read: cfg.ReadRoots, Write: cfg.WriteRoots}
 	srv := newServer(cfg.Hostname, "tsnet", cfg.Owner, roots, cfg.ChunkSize)
-	srv.cacheDir = cfg.StateDir
+	cacheDir, err := DefaultCacheDir()
+	if err != nil {
+		return err
+	}
+	srv.cacheDir = cacheDir
+	if err := srv.attachState(cfg.StateDir); err != nil {
+		return err
+	}
+	token, err := writeGUIToken(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	srv.guiToken = token
 	ts := &tsnet.Server{
 		Hostname:  cfg.Hostname,
 		Dir:       cfg.StateDir,
@@ -57,13 +70,29 @@ func runTailnet(ctx context.Context, cfg Config) error {
 			id.NodeName = who.Node.ComputedName
 			id.NodeID = string(who.Node.StableID)
 		}
+		cap := tailcfg.PeerCapability(TailfileCap)
+		if who.CapMap.HasCapability(cap) {
+			id.GrantPresent = true
+			for _, raw := range who.CapMap[cap] {
+				id.GrantRaw = append(id.GrantRaw, append([]byte(nil), raw...))
+			}
+		}
 		return id, nil
 	}
 	srv.outbound = ts.HTTPClient()
 	res := &tsResolver{lc: lc, srv: srv, port: cfg.Port, http: srv.outbound}
 	srv.resolver = res
 
-	go watchOwner(ctx, lc, srv, cfg.Owner)
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	ownerErr := make(chan error, 1)
+	go func() {
+		if err := watchOwner(runCtx, lc, srv, cfg.Owner); err != nil {
+			log.Printf("tailfile: %v", err)
+			ownerErr <- err
+			cancelRun()
+		}
+	}()
 
 	tail := &http.Server{Handler: srv.TailnetHandler(), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
@@ -73,51 +102,66 @@ func runTailnet(ctx context.Context, cfg Config) error {
 	}()
 	log.Printf("tailfile %s listening on the tailnet :%d and http://%s", cfg.Hostname, cfg.Port, cfg.LocalAddr)
 	log.Printf("state: %s", cfg.StateDir)
+	log.Printf("drag-out cache: %s", srv.cacheDir)
 	if len(cfg.WriteRoots) == 0 {
 		log.Printf("writes are disabled — pass -write to allow paste onto this node")
 	}
 
-	err = serveLocal(ctx, cfg.LocalAddr, srv.LocalHandler())
+	err = serveLocal(runCtx, cfg.LocalAddr, srv.LocalHandler())
 	shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = tail.Shutdown(shut)
 	_ = ts.Close()
-	return err
+	select {
+	case oerr := <-ownerErr:
+		return oerr
+	default:
+		return err
+	}
 }
 
-func watchOwner(ctx context.Context, lc *local.Client, srv *Server, configured string) {
-	if configured != "" {
+func watchOwner(ctx context.Context, lc *local.Client, srv *Server, configured string) error {
+	if strings.TrimSpace(configured) != "" {
 		srv.setOwner(configured)
 		log.Printf("tailfile owner (configured): %s", configured)
-		return
+		return nil
 	}
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for {
-		if login := selfLogin(ctx, lc); login != "" {
-			srv.setOwner(login)
-			log.Printf("tailfile owner (this node's tailnet user): %s", login)
-			return
+		login, tagged, ok := selfIdentity(ctx, lc)
+		if ok {
+			owner, err := ResolveOwner(login, tagged, "")
+			if err != nil {
+				return err
+			}
+			srv.setOwner(owner)
+			log.Printf("tailfile owner (this node's tailnet user): %s", owner)
+			return nil
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil
 		case <-tick.C:
 		}
 	}
 }
 
-func selfLogin(ctx context.Context, lc *local.Client) string {
+func selfIdentity(ctx context.Context, lc *local.Client) (login string, tagged, ok bool) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	st, err := lc.Status(ctx)
 	if err != nil || st == nil || st.Self == nil {
-		return ""
+		return "", false, false
 	}
-	if u, ok := st.User[st.Self.UserID]; ok {
-		return u.LoginName
+	tagged = st.Self.IsTagged()
+	if u, found := st.User[st.Self.UserID]; found {
+		login = u.LoginName
 	}
-	return ""
+	if login == "" && !tagged {
+		return "", false, false
+	}
+	return login, tagged, true
 }
 
 type tsResolver struct {

@@ -38,7 +38,7 @@ func TestListStatSymlinkAndHidePartials(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	c := NewClient(ts.URL)
+	c := localClient(ts)
 	listing, err := c.List(context.Background(), "", dir)
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +80,7 @@ func TestRangeRead(t *testing.T) {
 	}
 	for _, tc := range cases {
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/fs/read?path="+url.QueryEscape(path), nil)
+		req.Header.Set("Authorization", "Bearer "+testGUIToken)
 		if tc.rng != "" {
 			req.Header.Set("Range", tc.rng)
 		}
@@ -103,9 +104,9 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 	defer ts.Close()
 	dest := filepath.Join(dir, "out.bin")
 	payload := bytes.Repeat([]byte("xyz"), 1500) // 4500 bytes, chunks of 1024
-	c := &httpAPI{base: ts.URL, http: http.DefaultClient}
+	c := &httpAPI{base: ts.URL, http: http.DefaultClient, token: testGUIToken}
 	ctx := context.Background()
-	up, err := c.StartUpload(ctx, dest, int64(len(payload)), "")
+	up, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	again, err := c.StartUpload(ctx, dest, int64(len(payload)), up.ID)
+	again, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, up.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +146,8 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 		}
 		again.Offset = next
 	}
-	if err := c.FinishUpload(ctx, again.ID); err != nil {
+	sumAll := sha256.Sum256(payload)
+	if err := c.FinishUpload(ctx, again.ID, hex.EncodeToString(sumAll[:])); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(dest)
@@ -160,12 +162,13 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 func TestWriteRequiresWriteRoot(t *testing.T) {
 	_, ts, dir := newLocal(t, false)
 	defer ts.Close()
-	c := &httpAPI{base: ts.URL, http: http.DefaultClient}
-	_, err := c.StartUpload(context.Background(), filepath.Join(dir, "nope.txt"), 3, "")
+	c := &httpAPI{base: ts.URL, http: http.DefaultClient, token: testGUIToken}
+	_, err := c.StartUpload(context.Background(), filepath.Join(dir, "nope.txt"), 3, 0, "")
 	if err == nil || !strings.Contains(err.Error(), "write") {
 		t.Fatalf("expected read-only error, got %v", err)
 	}
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/fs/list?path="+url.QueryEscape(dir), nil)
+	req.Header.Set("Authorization", "Bearer "+testGUIToken)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -362,6 +365,7 @@ func TestReadOnlyDestination(t *testing.T) {
 	ts := httptest.NewServer(lb.Handler())
 	t.Cleanup(ts.Close)
 	c := NewClient(ts.URL)
+	c.Token = lb.Token
 	tr, err := c.StartTransfer(context.Background(), TransferRequest{
 		Mode: "push", FromNode: "alpha", FromPath: src,
 		ToNode: "gamma", ToPath: filepath.Join(g, "a.txt"),
@@ -378,7 +382,7 @@ func TestReadOnlyDestination(t *testing.T) {
 func TestMkdirRename(t *testing.T) {
 	_, ts, dir := newLocal(t, true)
 	defer ts.Close()
-	c := NewClient(ts.URL)
+	c := localClient(ts)
 	nested := filepath.Join(dir, "n", "m")
 	if err := c.Mkdir(context.Background(), "", nested); err != nil {
 		t.Fatal(err)
@@ -433,7 +437,9 @@ func newPair(t *testing.T, a, b string, chunk int) pair {
 	t.Cleanup(lb.Close)
 	ts := httptest.NewServer(lb.Handler())
 	t.Cleanup(ts.Close)
-	return pair{lb: lb, client: NewClient(ts.URL)}
+	c := NewClient(ts.URL)
+	c.Token = lb.Token
+	return pair{lb: lb, client: c}
 }
 
 func mustTransfer(t *testing.T, p pair, req TransferRequest) Transfer {
@@ -479,8 +485,17 @@ func newLocal(t *testing.T, write bool) (*Server, *httptest.Server, string) {
 		roots.Write = []string{dir}
 	}
 	s := newServer("local", "test", "ada@example.com", roots, 1024)
+	s.guiToken = testGUIToken
 	ts := httptest.NewServer(s.LocalHandler())
 	return s, ts, dir
+}
+
+const testGUIToken = "test-gui-token"
+
+func localClient(ts *httptest.Server) *Client {
+	c := NewClient(ts.URL)
+	c.Token = testGUIToken
+	return c
 }
 
 func readAll(resp *http.Response) ([]byte, error) {

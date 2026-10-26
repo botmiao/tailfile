@@ -52,9 +52,31 @@ export type Preview = {
 };
 
 const storageKey = "tailfile.agent";
+const previewKey = "tailfile.preview";
+
+declare global {
+  interface Window {
+    TAILFILE_TOKEN?: string;
+  }
+}
 
 export function loadBase(): string {
   return localStorage.getItem(storageKey) || "http://127.0.0.1:8645";
+}
+
+export function loadPreviewOn(): boolean {
+  return localStorage.getItem(previewKey) !== "0";
+}
+
+export function savePreviewOn(on: boolean): void {
+  localStorage.setItem(previewKey, on ? "1" : "0");
+}
+
+function authHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  const token = window.TAILFILE_TOKEN;
+  if (token) headers.set("Authorization", "Bearer " + token);
+  return headers;
 }
 
 export function saveBase(base: string): void {
@@ -64,7 +86,7 @@ export function saveBase(base: string): void {
 async function call<T>(base: string, method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(base + path, {
     method,
-    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    headers: authHeaders(body === undefined ? undefined : { "Content-Type": "application/json" }),
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (res.status === 204) return undefined as T;
@@ -98,6 +120,32 @@ export function preview(base: string, node: string, path: string) {
 export function readURL(base: string, node: string, path: string) {
   const q = new URLSearchParams({ node, path });
   return base.replace(/\/$/, "") + "/v1/fs/read?" + q;
+}
+
+async function readResponse(base: string, node: string, path: string): Promise<Response> {
+  const res = await fetch(readURL(base, node, path), { headers: authHeaders() });
+  if (!res.ok) {
+    const text = await res.text();
+    let message = res.statusText;
+    try {
+      const data = JSON.parse(text) as { error?: string };
+      if (data.error) message = data.error;
+    } catch {
+      if (text) message = text;
+    }
+    throw new Error(message || `HTTP ${res.status}`);
+  }
+  return res;
+}
+
+export async function readBlob(base: string, node: string, path: string): Promise<Blob> {
+  const res = await readResponse(base, node, path);
+  return res.blob();
+}
+
+export async function readBytes(base: string, node: string, path: string): Promise<Uint8Array> {
+  const res = await readResponse(base, node, path);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 export function mkdir(base: string, node: string, path: string) {

@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -71,7 +73,12 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, info)
 		return
 	}
-	writeJSON(w, http.StatusOK, s.Info())
+	info := s.Info()
+	roots := s.rootsFor(r.Context())
+	info.ReadRoots = append([]string(nil), roots.Read...)
+	info.WriteRoots = append([]string(nil), roots.Write...)
+	info.ReadOnly = roots.ReadOnly()
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
@@ -90,7 +97,7 @@ func (s *Server) handleList(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, listing)
 		return
 	}
-	listing, err := s.List(path)
+	listing, err := s.list(s.rootsFor(r.Context()), path)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -114,7 +121,7 @@ func (s *Server) handleStat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, ent)
 		return
 	}
-	ent, err := s.Stat(path)
+	ent, err := s.stat(s.rootsFor(r.Context()), path)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -129,7 +136,7 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		s.proxyRead(w, r, node, path)
 		return
 	}
-	st, err := s.Stat(path)
+	st, err := s.stat(s.rootsFor(r.Context()), path)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -139,7 +146,8 @@ func (s *Server) handleRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeFile(w, r, st, func(start, end int64) (io.ReadCloser, int64, error) {
-		rc, size, _, err := s.Open(path, start, end)
+		roots := s.rootsFor(r.Context())
+		rc, size, _, err := s.open(roots, path, start, end)
 		return rc, size, err
 	})
 }
@@ -224,7 +232,7 @@ func (s *Server) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := s.Mkdir(body.Path); err != nil {
+	if err := s.mkdir(s.rootsFor(r.Context()), body.Path); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -254,7 +262,7 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if err := s.Rename(body.From, body.To); err != nil {
+	if err := s.rename(s.rootsFor(r.Context()), body.From, body.To); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -263,15 +271,16 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Path     string `json:"path"`
-		Size     int64  `json:"size"`
-		ResumeID string `json:"resumeId"`
+		Path      string `json:"path"`
+		Size      int64  `json:"size"`
+		ResumeID  string `json:"resumeId"`
+		MtimeUnix int64  `json:"mtimeUnix"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, statusErr(400, "bad json"))
 		return
 	}
-	up, err := s.uploads.Start(s.roots, body.Path, body.Size, body.ResumeID)
+	up, err := s.uploads.Start(s.rootsFor(r.Context()), body.Path, body.Size, body.MtimeUnix, body.ResumeID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -327,7 +336,14 @@ func (s *Server) handleUploadAbort(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUploadFinish(w http.ResponseWriter, r *http.Request) {
-	up, err := s.uploads.Finish(r.PathValue("id"))
+	var body struct {
+		SHA256 string `json:"sha256"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, statusErr(400, "bad json"))
+		return
+	}
+	up, err := s.uploads.Finish(r.PathValue("id"), body.SHA256)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -341,7 +357,7 @@ func (s *Server) handleJobStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, statusErr(400, "bad json"))
 		return
 	}
-	job, err := s.jobs.start(req)
+	job, err := s.jobs.start(r.Context(), req)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -539,6 +555,7 @@ func (s *Server) startTransfer(ctx context.Context, req TransferRequest) (Transf
 	s.trackMu.Lock()
 	s.tracks[id] = rec
 	s.trackMu.Unlock()
+	s.saveTracks()
 	return Transfer{
 		ID: id, Mode: req.Mode, FromNode: req.FromNode, FromPath: req.FromPath,
 		ToNode: req.ToNode, ToPath: req.ToPath, RunnerNode: runner, Job: job,
@@ -627,7 +644,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	job, err := s.jobs.startImport(destURL, req.DestDir, req.Paths)
+	job, err := s.jobs.startImport(r.Context(), destURL, req.DestDir, req.Paths)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -658,7 +675,7 @@ func (s *Server) cache(ctx context.Context, req CacheRequest) (CacheResult, erro
 		return CacheResult{}, err
 	}
 	if _, ok := api.(directAPI); ok {
-		st, err := s.Stat(req.Path)
+		st, err := s.stat(s.rootsFor(ctx), req.Path)
 		if err != nil {
 			return CacheResult{}, err
 		}
@@ -674,22 +691,25 @@ func (s *Server) cache(ctx context.Context, req CacheRequest) (CacheResult, erro
 	if st.IsDir {
 		return CacheResult{}, statusErr(400, "cache a file, not a folder")
 	}
-	dir := filepath.Join(s.cacheDir, "tailfile-cache", sanitize(req.Node))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	dir := s.cacheDir
+	if dir == "" {
+		dir = os.TempDir()
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return CacheResult{}, err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return CacheResult{}, err
 	}
 	name := BaseRemote(st.Path)
-	if name == "" {
-		name = "file"
-	}
-	dest := filepath.Join(dir, name)
+	dest := filepath.Join(dir, cacheObjectName(req.Node, st.Path, name))
 	rc, _, err := api.Open(ctx, req.Path, 0, -1)
 	if err != nil {
 		return CacheResult{}, err
 	}
 	defer rc.Close()
 	tmp := dest + ".partial"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return CacheResult{}, err
 	}
@@ -706,7 +726,20 @@ func (s *Server) cache(ctx context.Context, req CacheRequest) (CacheResult, erro
 	if err := os.Rename(tmp, dest); err != nil {
 		return CacheResult{}, err
 	}
+	if err := os.Chmod(dest, 0o600); err != nil {
+		return CacheResult{}, err
+	}
 	return CacheResult{LocalPath: dest, Cached: true}, nil
+}
+
+func cacheObjectName(node, remotePath, base string) string {
+	sum := sha256.Sum256([]byte(node + "\x00" + remotePath))
+	prefix := hex.EncodeToString(sum[:8])
+	name := sanitize(base)
+	if name == "" || name == "." || name == ".." {
+		name = "file"
+	}
+	return prefix + "-" + name
 }
 
 func (s *Server) handleReveal(w http.ResponseWriter, r *http.Request) {

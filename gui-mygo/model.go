@@ -3,8 +3,12 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +28,10 @@ type clip struct {
 }
 
 type app struct {
-	client *agent.Client
-	addr   string
+	client    *agent.Client
+	addr      string
+	token     string
+	previewOn bool
 
 	mu       sync.Mutex
 	win      *mygo.Window
@@ -71,24 +77,26 @@ type app struct {
 	listH float32
 }
 
-func newApp(addr string) *app {
+func newApp(addr, token string) *app {
 	if addr == "" {
 		addr = "http://127.0.0.1:8645"
 	}
 	a := &app{
-		client:   agent.NewClient(addr),
-		addr:     addr,
-		subdirs:  map[string][]string{},
-		loading:  map[string]bool{},
-		seenJob:  map[string]string{},
-		treeSel:  -1,
-		listSel:  -1,
-		mode:     "push",
-		status:   "Not connected",
-		sideW:    260,
-		listH:    360,
-		stopPoll: make(chan struct{}),
+		addr:      addr,
+		token:     token,
+		previewOn: loadPreviewPref(),
+		subdirs:   map[string][]string{},
+		loading:   map[string]bool{},
+		seenJob:   map[string]string{},
+		treeSel:   -1,
+		listSel:   -1,
+		mode:      "push",
+		status:    "Not connected",
+		sideW:     260,
+		listH:     360,
+		stopPoll:  make(chan struct{}),
 	}
+	a.bindClient()
 	a.tree.List.Selected = &a.treeSel
 	a.list.Selected = &a.listSel
 	a.list.Label = func(i int) string {
@@ -98,6 +106,48 @@ func newApp(addr string) *app {
 		return a.entries[i].Name
 	}
 	return a
+}
+
+func (a *app) bindClient() {
+	c := agent.NewClient(a.addr)
+	c.Token = a.token
+	c.Origin = agent.OriginMyGo
+	a.client = c
+}
+
+func loadPreviewPref() bool {
+	path := previewPrefPath()
+	if path == "" {
+		return true
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(b)) != "0"
+}
+
+func savePreviewPref(on bool) {
+	path := previewPrefPath()
+	if path == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	v := []byte("1\n")
+	if !on {
+		v = []byte("0\n")
+	}
+	_ = os.WriteFile(path, v, 0o600)
+}
+
+func previewPrefPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "tailfile", "mygo-preview")
 }
 
 func (a *app) onMain(fn func()) {
@@ -378,7 +428,7 @@ func (a *app) importDropped(paths []string) {
 }
 
 func (a *app) loadPreview(e agent.Entry) {
-	if e.IsDir || e.Path == a.previewPath {
+	if !a.previewOn || e.IsDir || e.Path == a.previewPath {
 		return
 	}
 	a.previewPath = e.Path
@@ -398,11 +448,13 @@ func (a *app) loadPreview(e agent.Entry) {
 			}
 		}
 		pdfURL := ""
-		if kind == "pdf" {
-			q := url.Values{}
-			q.Set("node", node)
-			q.Set("path", path)
-			pdfURL = a.client.Base + "/v1/fs/read?" + q.Encode()
+		if err == nil && kind == "pdf" && e.Size <= 32<<20 {
+			raw, rerr := a.client.Open(ctx, node, path, 32<<20)
+			if rerr == nil {
+				if local, werr := writePreviewPDF(raw); werr == nil {
+					pdfURL = fileURL(local)
+				}
+			}
 		}
 		a.onMain(func() {
 			if a.previewPath != path {
@@ -431,6 +483,32 @@ func (a *app) loadPreview(e agent.Entry) {
 			}
 		})
 	}()
+}
+
+func writePreviewPDF(data []byte) (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil || base == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "tailfile")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	_ = os.Chmod(dir, 0o700)
+	sum := sha256.Sum256(data)
+	path := filepath.Join(dir, "preview-"+hex.EncodeToString(sum[:8])+".pdf")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func fileURL(path string) string {
+	slash := filepath.ToSlash(path)
+	if !strings.HasPrefix(slash, "/") {
+		slash = "/" + slash
+	}
+	return (&url.URL{Scheme: "file", Path: slash}).String()
 }
 
 func (a *app) pollOnce() {

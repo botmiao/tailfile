@@ -9,6 +9,12 @@ type Identity struct {
 	NodeName string `json:"nodeName,omitempty"`
 	NodeID   string `json:"nodeId,omitempty"`
 	Local    bool   `json:"local,omitempty"`
+
+	// GrantPresent is true when WhoIs CapMap contains TailfileCap.
+	// GrantRaw is the raw JSON values of that capability. Both are
+	// filled by the tailnet whois callback and ignored on the wire.
+	GrantPresent bool     `json:"-"`
+	GrantRaw     [][]byte `json:"-"`
 }
 
 // Entry is one directory listing row.
@@ -63,28 +69,42 @@ type Upload struct {
 	Offset    int64  `json:"offset"`
 	ChunkSize int    `json:"chunkSize"`
 	Complete  bool   `json:"complete"`
+	MtimeUnix int64  `json:"mtimeUnix,omitempty"`
+	SHA256    string `json:"sha256,omitempty"`
 }
 
 // Job is a direct node-to-node copy (or a localhost import).
 type Job struct {
-	ID            string    `json:"id"`
-	Mode          string    `json:"mode"` // push, pull, import
-	Status        string    `json:"status"`
-	SrcPath       string    `json:"srcPath,omitempty"`
-	Sources       []string  `json:"sources,omitempty"`
-	DestPath      string    `json:"destPath"`
-	SrcBaseURL    string    `json:"srcBaseURL,omitempty"`
-	DestBaseURL   string    `json:"destBaseURL,omitempty"`
-	BytesTotal    int64     `json:"bytesTotal"`
-	BytesDone     int64     `json:"bytesDone"`
-	FilesTotal    int       `json:"filesTotal"`
-	FilesDone     int       `json:"filesDone"`
-	Current       string    `json:"current,omitempty"`
-	CurrentUpload string    `json:"currentUpload,omitempty"`
-	DonePaths     []string  `json:"donePaths,omitempty"`
-	Error         string    `json:"error,omitempty"`
-	Created       time.Time `json:"created"`
-	Updated       time.Time `json:"updated"`
+	ID            string        `json:"id"`
+	Mode          string        `json:"mode"` // push, pull, import
+	Status        string        `json:"status"`
+	SrcPath       string        `json:"srcPath,omitempty"`
+	Sources       []string      `json:"sources,omitempty"`
+	DestPath      string        `json:"destPath"`
+	SrcBaseURL    string        `json:"srcBaseURL,omitempty"`
+	DestBaseURL   string        `json:"destBaseURL,omitempty"`
+	BytesTotal    int64         `json:"bytesTotal"`
+	BytesDone     int64         `json:"bytesDone"`
+	FilesTotal    int           `json:"filesTotal"`
+	FilesDone     int           `json:"filesDone"`
+	Current       string        `json:"current,omitempty"`
+	CurrentUpload string        `json:"currentUpload,omitempty"`
+	DonePaths     []string      `json:"donePaths,omitempty"`
+	Stamps        []SourceStamp `json:"stamps,omitempty"`
+	UseRoots      bool          `json:"useRoots,omitempty"`
+	ReadRoots     []string      `json:"readRoots,omitempty"`
+	WriteRoots    []string      `json:"writeRoots,omitempty"`
+	Error         string        `json:"error,omitempty"`
+	Created       time.Time     `json:"created"`
+	Updated       time.Time     `json:"updated"`
+}
+
+// SourceStamp is the source file identity stored with a job and in the
+// partial's meta. A resume that sees a different size or mtime starts over.
+type SourceStamp struct {
+	Rel       string `json:"rel"`
+	Size      int64  `json:"size"`
+	MtimeUnix int64  `json:"mtimeUnix"`
 }
 
 const (

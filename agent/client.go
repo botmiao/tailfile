@@ -15,8 +15,10 @@ import (
 // Client talks to the local orchestrator (127.0.0.1). GUIs use this
 // instead of embedding framework-specific bindings.
 type Client struct {
-	Base string
-	HTTP *http.Client
+	Base   string
+	HTTP   *http.Client
+	Token  string
+	Origin string
 }
 
 func NewClient(base string) *Client {
@@ -94,6 +96,7 @@ func (c *Client) Open(ctx context.Context, node, path string, max int64) ([]byte
 	if err != nil {
 		return nil, err
 	}
+	c.authorize(req)
 	resp, err := c.http().Do(req)
 	if err != nil {
 		return nil, err
@@ -175,6 +178,15 @@ func (c *Client) Reveal(ctx context.Context, path string) error {
 	return c.do(ctx, http.MethodPost, "/v1/local/reveal", map[string]string{"path": path}, nil)
 }
 
+func (c *Client) authorize(req *http.Request) {
+	if c.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.Token)
+	}
+	if c.Origin != "" {
+		req.Header.Set("Origin", c.Origin)
+	}
+}
+
 func (c *Client) http() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
@@ -203,6 +215,7 @@ func (c *Client) do(ctx context.Context, method, p string, in, out any) error {
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	c.authorize(req)
 	resp, err := c.http().Do(req)
 	if err != nil {
 		return err

@@ -23,9 +23,9 @@ type NodeAPI interface {
 	Open(ctx context.Context, path string, start, end int64) (io.ReadCloser, int64, error)
 	Mkdir(ctx context.Context, path string) error
 	Rename(ctx context.Context, from, to string) error
-	StartUpload(ctx context.Context, path string, size int64, resumeID string) (Upload, error)
+	StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error)
 	PutChunk(ctx context.Context, id string, offset int64, data []byte, sumHex string) (int64, error)
-	FinishUpload(ctx context.Context, id string) error
+	FinishUpload(ctx context.Context, id string, sha256hex string) error
 	AbortUpload(ctx context.Context, id string) error
 	StartJob(ctx context.Context, req JobRequest) (Job, error)
 	GetJob(ctx context.Context, id string) (Job, error)
@@ -49,21 +49,21 @@ func (d directAPI) List(ctx context.Context, path string) (Listing, error) {
 	if err := ctx.Err(); err != nil {
 		return Listing{}, err
 	}
-	return d.s.List(path)
+	return d.s.list(d.s.rootsFor(ctx), path)
 }
 
 func (d directAPI) Stat(ctx context.Context, path string) (Entry, error) {
 	if err := ctx.Err(); err != nil {
 		return Entry{}, err
 	}
-	return d.s.Stat(path)
+	return d.s.stat(d.s.rootsFor(ctx), path)
 }
 
 func (d directAPI) Open(ctx context.Context, path string, start, end int64) (io.ReadCloser, int64, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, 0, err
 	}
-	rc, size, _, err := d.s.Open(path, start, end)
+	rc, size, _, err := d.s.open(d.s.rootsFor(ctx), path, start, end)
 	return rc, size, err
 }
 
@@ -71,21 +71,21 @@ func (d directAPI) Mkdir(ctx context.Context, path string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return d.s.Mkdir(path)
+	return d.s.mkdir(d.s.rootsFor(ctx), path)
 }
 
 func (d directAPI) Rename(ctx context.Context, from, to string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return d.s.Rename(from, to)
+	return d.s.rename(d.s.rootsFor(ctx), from, to)
 }
 
-func (d directAPI) StartUpload(ctx context.Context, path string, size int64, resumeID string) (Upload, error) {
+func (d directAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error) {
 	if err := ctx.Err(); err != nil {
 		return Upload{}, err
 	}
-	return d.s.uploads.Start(d.s.roots, path, size, resumeID)
+	return d.s.uploads.Start(d.s.rootsFor(ctx), path, size, mtimeUnix, resumeID)
 }
 
 func (d directAPI) PutChunk(ctx context.Context, id string, offset int64, data []byte, sumHex string) (int64, error) {
@@ -104,11 +104,11 @@ func (d directAPI) PutChunk(ctx context.Context, id string, offset int64, data [
 	return off, err
 }
 
-func (d directAPI) FinishUpload(ctx context.Context, id string) error {
+func (d directAPI) FinishUpload(ctx context.Context, id string, sha256hex string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	_, err := d.s.uploads.Finish(id)
+	_, err := d.s.uploads.Finish(id, sha256hex)
 	return err
 }
 
@@ -123,7 +123,7 @@ func (d directAPI) StartJob(ctx context.Context, req JobRequest) (Job, error) {
 	if err := ctx.Err(); err != nil {
 		return Job{}, err
 	}
-	return d.s.jobs.start(req)
+	return d.s.jobs.start(ctx, req)
 }
 
 func (d directAPI) GetJob(ctx context.Context, id string) (Job, error) {
@@ -152,8 +152,9 @@ func (d directAPI) Health(context.Context) error { return nil }
 
 // httpAPI calls another node's tailnet (or loopback) HTTP API.
 type httpAPI struct {
-	base string
-	http *http.Client
+	base  string
+	http  *http.Client
+	token string
 }
 
 func (h *httpAPI) client() *http.Client {
@@ -193,6 +194,7 @@ func (h *httpAPI) Open(ctx context.Context, path string, start, end int64) (io.R
 			req.Header.Set("Range", fmt.Sprintf("bytes=%d-", start))
 		}
 	}
+	h.authorize(req)
 	resp, err := h.client().Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -220,10 +222,10 @@ func (h *httpAPI) Rename(ctx context.Context, from, to string) error {
 	return h.do(ctx, http.MethodPost, "/v1/fs/rename", map[string]string{"from": from, "to": to}, nil, nil)
 }
 
-func (h *httpAPI) StartUpload(ctx context.Context, path string, size int64, resumeID string) (Upload, error) {
+func (h *httpAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error) {
 	var out Upload
 	err := h.do(ctx, http.MethodPost, "/v1/uploads", map[string]any{
-		"path": path, "size": size, "resumeId": resumeID,
+		"path": path, "size": size, "mtimeUnix": mtimeUnix, "resumeId": resumeID,
 	}, nil, &out)
 	return out, err
 }
@@ -236,6 +238,7 @@ func (h *httpAPI) PutChunk(ctx context.Context, id string, offset int64, data []
 	req.Header.Set("Upload-Offset", strconv.FormatInt(offset, 10))
 	req.Header.Set("X-Chunk-SHA256", sumHex)
 	req.Header.Set("Content-Type", "application/octet-stream")
+	h.authorize(req)
 	resp, err := h.client().Do(req)
 	if err != nil {
 		return 0, err
@@ -267,8 +270,10 @@ func (h *httpAPI) PutChunk(ctx context.Context, id string, offset int64, data []
 	return out.Offset, nil
 }
 
-func (h *httpAPI) FinishUpload(ctx context.Context, id string) error {
-	return h.do(ctx, http.MethodPost, "/v1/uploads/"+url.PathEscape(id)+"/finish", nil, nil, nil)
+func (h *httpAPI) FinishUpload(ctx context.Context, id string, sha256hex string) error {
+	return h.do(ctx, http.MethodPost, "/v1/uploads/"+url.PathEscape(id)+"/finish", map[string]string{
+		"sha256": sha256hex,
+	}, nil, nil)
 }
 
 func (h *httpAPI) AbortUpload(ctx context.Context, id string) error {
@@ -317,6 +322,7 @@ func (h *httpAPI) do(ctx context.Context, method, p string, in any, hdr http.Hea
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	h.authorize(req)
 	for k, v := range hdr {
 		req.Header[k] = v
 	}
@@ -333,6 +339,12 @@ func (h *httpAPI) do(ctx context.Context, method, p string, in any, hdr http.Hea
 		return nil
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+func (h *httpAPI) authorize(req *http.Request) {
+	if h.token != "" {
+		req.Header.Set("Authorization", "Bearer "+h.token)
+	}
 }
 
 func readAPIError(resp *http.Response) error {

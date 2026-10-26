@@ -47,8 +47,22 @@ func runDemo(ctx context.Context, cfg Config) error {
 	}
 	defer lb.Close()
 	lb.Orch.mode = "demo"
-	lb.Orch.cacheDir = filepath.Join(cfg.StateDir, "cache")
+	cacheDir, err := DefaultCacheDir()
+	if err != nil {
+		return err
+	}
+	lb.Orch.cacheDir = cacheDir
+	if err := lb.Orch.attachState(cfg.StateDir); err != nil {
+		return err
+	}
+	token, err := writeGUIToken(cfg.StateDir)
+	if err != nil {
+		return err
+	}
+	lb.Orch.guiToken = token
+	lb.Token = token
 	log.Printf("tailfile demo orchestrator on http://%s (owner %s)", cfg.LocalAddr, owner)
+	log.Printf("drag-out cache: %s", cacheDir)
 	log.Printf("nodes: alpha and beta accept writes; gamma is read-only")
 	return serveLocal(ctx, cfg.LocalAddr, lb.Handler())
 }

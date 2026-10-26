@@ -37,6 +37,9 @@ export function App() {
   const [renameTo, setRenameTo] = useState("");
   const [importText, setImportText] = useState("");
   const [preview, setPreview] = useState<api.Preview | null>(null);
+  const [previewOn, setPreviewOn] = useState(api.loadPreviewOn);
+  const [imageURL, setImageURL] = useState<string | null>(null);
+  const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [transfers, setTransfers] = useState<api.Transfer[]>([]);
   const [imports, setImports] = useState<api.Job[]>([]);
   const [dragNote, setDragNote] = useState("");
@@ -145,7 +148,7 @@ export function App() {
   const file = sel >= 0 && sel < entries.length ? entries[sel] : null;
 
   useEffect(() => {
-    if (!folder || !file || file.isDir) {
+    if (!previewOn || !folder || !file || file.isDir) {
       setPreview(null);
       return;
     }
@@ -164,7 +167,49 @@ export function App() {
     return () => {
       stop = true;
     };
-  }, [base, folder, file]);
+  }, [base, folder, file, previewOn]);
+
+  useEffect(() => {
+    if (!previewOn || preview?.kind !== "image" || !folder || !file || file.isDir) {
+      setImageURL(null);
+      return;
+    }
+    let stop = false;
+    let objectURL = "";
+    api
+      .readBlob(base, folder.node, file.path)
+      .then((blob) => {
+        if (stop) return;
+        objectURL = URL.createObjectURL(blob);
+        setImageURL(objectURL);
+      })
+      .catch(() => {
+        if (!stop) setImageURL(null);
+      });
+    return () => {
+      stop = true;
+      if (objectURL) URL.revokeObjectURL(objectURL);
+    };
+  }, [base, folder, file, preview, previewOn]);
+
+  useEffect(() => {
+    if (!previewOn || preview?.kind !== "pdf" || !folder || !file || file.isDir) {
+      setPdfData(null);
+      return;
+    }
+    let stop = false;
+    api
+      .readBytes(base, folder.node, file.path)
+      .then((bytes) => {
+        if (!stop) setPdfData(bytes);
+      })
+      .catch(() => {
+        if (!stop) setPdfData(null);
+      });
+    return () => {
+      stop = true;
+    };
+  }, [base, folder, file, preview, previewOn]);
 
   const rows = useMemo(() => flatten(nodes, expanded, cache), [nodes, expanded, cache]);
 
@@ -329,8 +374,6 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
-
-  const readURL = folder && file && !file.isDir ? api.readURL(base, folder.node, file.path) : "";
 
   return (
     <div className="tf-app">
@@ -501,21 +544,35 @@ export function App() {
             )}
           </div>
           <div className="tf-preview">
-            <p className="tf-pane-title">Preview</p>
-            {preview?.kind === "image" && readURL && (
-              <img src={readURL} alt={preview.name} />
+            <p className="tf-pane-title">
+              Preview
+              <button
+                className="tf-textbtn"
+                type="button"
+                onClick={() => {
+                  const next = !previewOn;
+                  setPreviewOn(next);
+                  api.savePreviewOn(next);
+                }}
+              >
+                {previewOn ? "Preview on" : "Preview off"}
+              </button>
+            </p>
+            {!previewOn && <p className="tf-muted">Preview is off.</p>}
+            {previewOn && preview?.kind === "image" && imageURL && (
+              <img src={imageURL} alt={preview.name} />
             )}
-            {preview?.kind === "pdf" && readURL && <PdfView url={readURL} />}
-            {preview?.text && (
+            {previewOn && preview?.kind === "pdf" && pdfData && <PdfView data={pdfData} />}
+            {previewOn && preview?.text && (
               <pre>
                 {preview.text}
                 {preview.truncated ? "\n…truncated" : ""}
               </pre>
             )}
-            {preview && preview.kind !== "text" && preview.kind !== "image" && preview.kind !== "pdf" && (
+            {previewOn && preview && preview.kind !== "text" && preview.kind !== "image" && preview.kind !== "pdf" && (
               <p className="tf-muted">No preview for this file type.</p>
             )}
-            {!preview && <p className="tf-muted">Select a file to preview text, an image, or a PDF.</p>}
+            {previewOn && !preview && <p className="tf-muted">Select a file to preview text, an image, or a PDF.</p>}
             {dragNote && (
               <>
                 <p className="tf-muted">{dragNote}</p>

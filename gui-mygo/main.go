@@ -6,13 +6,22 @@ import (
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
+
+	"tailfile.local/agent/guitoken"
 )
 
 func main() {
 	addr := flag.String("agent", "http://127.0.0.1:8645", "local tailfile agent")
+	tokenFile := flag.String("token-file", "", "path to the agent GUI token (default: the state dir gui-token file)")
+	stateDir := flag.String("state", "", "agent state dir used to find gui-token")
 	flag.Parse()
 
-	a := newApp(*addr)
+	token, err := guitoken.Load(*tokenFile, *stateDir)
+	if err != nil {
+		log.Printf("tailfile: %v", err)
+		token = ""
+	}
+	a := newApp(*addr, token)
 	mygo.App.WhenReady(func() {
 		a.win = mygo.NewWindow(mygo.WindowOptions{
 			Title:           "Tailfile",

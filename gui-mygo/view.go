@@ -17,8 +17,10 @@ func (a *app) view(c *ui.Context) {
 		a.refresh()
 	}
 	a.followTree()
-	if e, ok := a.selectedEntry(); ok {
-		a.loadPreview(e)
+	if a.previewOn {
+		if e, ok := a.selectedEntry(); ok {
+			a.loadPreview(e)
+		}
 	}
 
 	t := c.Theme()
@@ -37,7 +39,7 @@ func (a *app) toolbar(c *ui.Context) {
 			ui.Text(c, "MyGo").FontSize(12).TextColor(t.TextMuted)
 			ui.TextInput(c, &a.addr).Placeholder("http://127.0.0.1:8645").Width(280)
 			if ui.Button(c, "Refresh").Clicked() {
-				a.client = agent.NewClient(a.addr)
+				a.bindClient()
 				a.refresh()
 			}
 			ui.Text(c, a.status).FontSize(12).TextColor(t.TextMuted).Shrink(1)
@@ -73,6 +75,20 @@ func (a *app) toolbar(c *ui.Context) {
 			}
 			if ui.Button(c, "Reveal").Clicked() {
 				a.revealDrag()
+			}
+			label := "Preview on"
+			if !a.previewOn {
+				label = "Preview off"
+			}
+			if ui.Button(c, label).Clicked() {
+				a.previewOn = !a.previewOn
+				savePreviewPref(a.previewOn)
+				if !a.previewOn {
+					a.previewPath = ""
+					a.previewText = ""
+					a.previewImg = nil
+					a.previewKind = ""
+				}
 			}
 		})
 		ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
@@ -244,6 +260,10 @@ func (a *app) preview(c *ui.Context) {
 	t := c.Theme()
 	ui.Column(c).Fill().Padding(12).Gap(8).Background(t.Surface).Children(func() {
 		ui.Text(c, "Preview").FontSize(11).TextColor(t.TextMuted)
+		if !a.previewOn {
+			ui.Text(c, "Preview is off.").TextColor(t.TextMuted).Wrap()
+			return
+		}
 		switch {
 		case a.previewImg != nil:
 			ui.Image(c, a.previewImg).MaxHeight(280).Fit(ui.Contain)

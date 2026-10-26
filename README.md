@@ -59,11 +59,11 @@ npm ci
 npm run build
 ```
 
-`scripts/build-all.sh` runs the agent tests, the MyGo test, and the cross-compiles below.
+`scripts/build-all.sh` runs the agent tests, the MyGo test, and the cross-compiles below, including linux/arm64 and windows/arm64 for the agent, MyGo, and Wails server mode. Linux desktop stays the host architecture (cgo). Windows desktop arm64 is best-effort, same as windows desktop amd64.
 
 ## Real tailnet
 
-On each machine, pick the folders the agent may read and the folders it may write. With no `-write` list the node is read-only. With no `-read` list the default read root is your home directory. Demo mode does not use that default.
+On each machine, pick the folders the agent may read and the folders it may write. With no `-write` list the node is read-only. With no `-read` list the agent creates `~/Tailfile` (mode `0700`) and shares only that directory. Demo mode does not use that default; it shares the temporary fixture directories.
 
 ```sh
 export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the command line if you can avoid it
@@ -75,9 +75,23 @@ export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the c
 
 `-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` so the key stays out of shell history. An empty key makes tsnet print an interactive login URL; open it in a browser. State (the node key) lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or `-state`. Do not commit that directory.
 
-The agent listens on the tailnet at `:8644` and on localhost at `127.0.0.1:8645`. Every tailnet request is checked with tsnet `LocalClient.WhoIs`. Until the agent knows its own tailnet user it refuses tailnet calls. After that, only that user is allowed, unless you set `-owner` or `TAILFILE_OWNER` to a different login. Localhost is trusted because it is loopback, and it is the only place that can import, cache, or reveal a path. Do not publish port 8645.
+The agent listens on the tailnet at `:8644` and on localhost at `127.0.0.1:8645`. The local listener refuses any address that is not `127.0.0.1`, `localhost`, or `::1` (`0.0.0.0:8645` and `:8645` will not start). Do not publish port 8645.
 
-Copy is a job on one of the two nodes. **Push** means the source reads its disk and writes the destination. **Pull** means the destination reads the source and writes its disk. Chunks are 1 MiB, SHA-256 checked, and a partial file (`*.tailfile-partial` plus a meta file) survives a dropped connection. Cancel and Resume work for the life of the agent process. Job records are in memory; the partial file is what makes resume possible after a cancel. Restarting the agent drops the job list. Existing files are not overwritten. Delete is not implemented.
+Every tailnet request is checked with tsnet `LocalClient.WhoIs`. Until the agent knows its own tailnet user it refuses tailnet calls. After that, only that user is allowed, unless you set `-owner` or `TAILFILE_OWNER` to a different login. A node whose tailnet user is `tagged-devices`, or whose own peer is tagged, has no human owner. The process exits with an error unless `-owner` or `TAILFILE_OWNER` is set.
+
+Tailscale grants can narrow (and share) access. If WhoIs `CapMap` contains `iori.dev/cap/tailfile`, that grant is enforced and the same-user check is not required. Each value is JSON:
+
+```json
+{"read": ["/home/ada/Tailfile"], "write": ["/home/ada/Tailfile/inbox"]}
+```
+
+A grant path is intersected with this node's `-read` and `-write` lists. A path outside those lists is dropped, so a grant cannot widen what the node shares. A grant wider than a configured root keeps the configured root. A missing capability falls back to the same-user rule. A capability that is present but empty, or that is not valid JSON, fails closed.
+
+The localhost API is the only place that can import, cache, or reveal a path. It does not use WhoIs. It requires a bearer token generated at each agent start (32 random bytes, hex), written mode `0600` to `<state dir>/gui-token`. The log line names that path and does not print the token. Both GUIs read the same file (or `-token-file` / `-state`). Wails injects it into `index.html` as `window.TAILFILE_TOKEN` and marks the page `no-store`, because the browser cannot read the file itself. MyGo sends `Origin: mygo://tailfile`. Requests must present `Authorization: Bearer …`. `Host` must be loopback, which blocks a DNS-rebinding name that points at 127.0.0.1. `Access-Control-Allow-Origin: *` is not set. A browser `Origin` is reflected only when it is the Wails server (`http://127.0.0.1:17431`, `localhost`, or `[::1]`, port 17431), a `wails://` desktop page, `http://wails.localhost`, or `mygo://tailfile`. An empty `Origin` is allowed together with the bearer (MyGo, curl, tests). Preflight `OPTIONS` does not require the bearer. Putting the token in the loopback Wails page does not stop another OS user who can already connect to `127.0.0.1:17431`; the `0600` file stops other users from reading the token off disk.
+
+`/v1/local/import` only accepts OS paths inside the read roots, including after symlink resolution. A path outside those roots is rejected. In demo mode the read roots are the fixture directories, so an import of `/tmp/...` fails. On a real agent, pass `-read` for every directory you want to import from.
+
+Copy is a job on one of the two nodes. **Push** means the source reads its disk and writes the destination. **Pull** means the destination reads the source and writes its disk. Chunks are 1 MiB, each with its own SHA-256. The partial (`*.tailfile-partial`) and its meta (`*.tailfile-meta`, mode `0600`) record the source size, the source mtime, and, at finish, the whole-file SHA-256. Finish deletes the partial if that hash does not match. If a later resume sees a different source size or mtime, that file starts over. A file that already finished is not overwritten; a source that changes after a successful copy fails with "already exists". Job and transfer records are `jobs.json` and `transfers.json` (mode `0600`) in the state directory, so Resume still works after the agent process restarts. A job that was running at shutdown comes back as `interrupted`. Delete is not implemented.
 
 The node does not escalate. It cannot sudo, and it does not show a UAC prompt. It only sees the files the user who launched it can see.
 
@@ -134,7 +148,7 @@ If the window is still blank, also try `GDK_BACKEND=x11` under XWayland. That wa
 
 ## Dragging files to the OS file manager
 
-Both shells can download a file into a local cache (`POST /v1/local/cache`) and then reveal it (`POST /v1/local/reveal`: Finder on macOS, Explorer on Windows, `xdg-open` of the parent directory on Linux).
+Both shells can download a file into a local cache (`POST /v1/local/cache`) and then reveal it (`POST /v1/local/reveal`: Finder on macOS, Explorer on Windows, `xdg-open` of the parent directory on Linux). The cache is `os.UserCacheDir()/tailfile` (mode `0700`), not the state directory. Each file is mode `0600` and named from a hash of the node id plus the remote path, so two `note.txt` files do not overwrite each other.
 
 MyGo can then drag that cached path out with `transfer.FileData`. The path has to exist already. There is no promised-file drag.
 
@@ -165,7 +179,9 @@ cd agent && go test -count=1 -race .
 cd gui-mygo && go test -count=1 .
 ```
 
-The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. They use an in-process loopback harness, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. They use an in-process loopback harness, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+
+Both GUIs show a preview when you select a file. Each has a persisted Preview on / Preview off control (default on). Wails stores it in `localStorage` under `tailfile.preview`. MyGo stores `0` or `1` in `UserConfigDir/tailfile/mygo-preview` (mode `0600`). Image and PDF bytes are fetched with the bearer token. An `<img src>` or a PDF.js URL would not send `Authorization`.
 
 MyGo's test builds the window with `ui.NewTester` and clicks Copy and Paste. It does not open a display.
 

@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"tailfile.local/agent/guitoken"
 )
 
 // Config is the process configuration for tailfile-agent and for GUIs that embed it.
@@ -28,13 +30,59 @@ type Config struct {
 	Ephemeral  bool
 }
 
+var userHomeDir = os.UserHomeDir
+
+func DefaultHostname() (string, error) {
+	return guitoken.DefaultHostname(), nil
+}
+
+func DefaultStateDir(hostname string) (string, error) {
+	return guitoken.DefaultStateDir(hostname), nil
+}
+
+// LoadGUIToken reads the per-start bearer. tokenFile wins. Otherwise the
+// file is <state dir>/gui-token, using stateDir or the default state dir.
+// The token value is not included in errors.
+func LoadGUIToken(tokenFile, stateDir string) (string, error) {
+	return guitoken.Load(tokenFile, stateDir)
+}
+
+func ensureShareDir(home string) (string, error) {
+	if strings.TrimSpace(home) == "" {
+		return "", errors.New("no home directory")
+	}
+	dir := filepath.Join(home, "Tailfile")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func DefaultCacheDir() (string, error) {
+	base, err := os.UserCacheDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		base = os.TempDir()
+	}
+	dir := filepath.Join(base, "tailfile")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
 func (c *Config) applyDefaults() error {
 	if c.Hostname == "" {
-		h, err := os.Hostname()
-		if err != nil || strings.TrimSpace(h) == "" {
-			h = "node"
+		host, err := DefaultHostname()
+		if err != nil {
+			return err
 		}
-		c.Hostname = "tailfile-" + sanitize(h)
+		c.Hostname = host
 	}
 	if c.Port == 0 {
 		c.Port = 8644
@@ -52,22 +100,29 @@ func (c *Config) applyDefaults() error {
 		c.Owner = os.Getenv("TAILFILE_OWNER")
 	}
 	if c.StateDir == "" {
-		base, err := os.UserConfigDir()
+		dir, err := DefaultStateDir(c.Hostname)
 		if err != nil {
-			base = os.TempDir()
+			return err
 		}
-		c.StateDir = filepath.Join(base, "tailfile", c.Hostname)
+		c.StateDir = dir
 	}
 	if err := os.MkdirAll(c.StateDir, 0o700); err != nil {
 		return err
 	}
+	if err := os.Chmod(c.StateDir, 0o700); err != nil {
+		return err
+	}
 	if !c.Demo && len(c.ReadRoots) == 0 {
-		home, err := os.UserHomeDir()
+		home, err := userHomeDir()
 		if err != nil {
 			return fmt.Errorf("no -read root and no home directory: %w", err)
 		}
-		c.ReadRoots = []string{home}
-		log.Printf("tailfile: read root defaulting to %s (read-only until -write is set)", home)
+		dir, err := ensureShareDir(home)
+		if err != nil {
+			return fmt.Errorf("default read root: %w", err)
+		}
+		c.ReadRoots = []string{dir}
+		log.Printf("tailfile: read root defaulting to %s (read-only until -write is set)", dir)
 	}
 	return nil
 }
@@ -83,7 +138,21 @@ func Run(ctx context.Context, cfg Config) error {
 	return runTailnet(ctx, cfg)
 }
 
+func requireLoopbackAddr(addr string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("local listen address %q must be host:port on 127.0.0.1 or localhost", addr)
+	}
+	if !hostIsLoopback(host) {
+		return fmt.Errorf("local API must listen on 127.0.0.1 or localhost, not %q", addr)
+	}
+	return nil
+}
+
 func serveLocal(ctx context.Context, addr string, h http.Handler) error {
+	if err := requireLoopbackAddr(addr); err != nil {
+		return err
+	}
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)

@@ -30,6 +30,7 @@ type LoopSpec struct {
 // peers trust a header that production WhoIs never reads.
 type Loopback struct {
 	Owner string
+	Token string
 	Orch  *Server
 
 	nodes map[string]*loopNode
@@ -143,10 +144,16 @@ func StartLoopback(owner string, chunk int, specs []LoopSpec) (*Loopback, error)
 		n.srv.remoteOverride = wire(n.rt)
 	}
 
-	orch := newServer("console", "loopback", owner, Roots{}, chunk)
+	var reads []string
+	for _, spec := range specs {
+		reads = append(reads, spec.Read...)
+	}
+	orch := newServer("console", "loopback", owner, Roots{Read: reads}, chunk)
+	orch.guiToken = "loopback-gui-token"
 	orch.remoteOverride = wire(consoleRT)
 	orch.resolver = loopResolver{lb: lb, rt: consoleRT}
 	lb.Orch = orch
+	lb.Token = orch.guiToken
 	return lb, nil
 }
 

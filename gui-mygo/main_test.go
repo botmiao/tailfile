@@ -7,7 +7,7 @@ import (
 )
 
 func TestChrome(t *testing.T) {
-	a := newApp("http://127.0.0.1:1")
+	a := newApp("http://127.0.0.1:1", "")
 	a.status = "Agent is not running"
 	tt := ui.NewTester(a.view, 1200, 800)
 	if !tt.HasText("Tailfile") {

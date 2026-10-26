@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,8 +26,9 @@ type Hooks struct {
 
 // Jobs runs direct copies on this node.
 type Jobs struct {
-	s     *Server
-	hooks Hooks
+	s         *Server
+	hooks     Hooks
+	statePath string
 
 	mu  sync.Mutex
 	all map[string]*runningJob
@@ -40,12 +43,13 @@ type runningJob struct {
 }
 
 type copyItem struct {
-	Rel    string
-	IsDir  bool
-	Size   int64
-	Local  string
-	Remote string
-	Dest   string
+	Rel       string
+	IsDir     bool
+	Size      int64
+	MtimeUnix int64
+	Local     string
+	Remote    string
+	Dest      string
 }
 
 func newJobs(s *Server) *Jobs {
@@ -86,6 +90,15 @@ func (r *runningJob) snapshot() Job {
 	if len(r.job.Sources) > 0 {
 		cp.Sources = append([]string(nil), r.job.Sources...)
 	}
+	if len(r.job.Stamps) > 0 {
+		cp.Stamps = append([]SourceStamp(nil), r.job.Stamps...)
+	}
+	if len(r.job.ReadRoots) > 0 {
+		cp.ReadRoots = append([]string(nil), r.job.ReadRoots...)
+	}
+	if len(r.job.WriteRoots) > 0 {
+		cp.WriteRoots = append([]string(nil), r.job.WriteRoots...)
+	}
 	return cp
 }
 
@@ -96,7 +109,7 @@ func (r *runningJob) update(fn func(*Job)) {
 	r.mu.Unlock()
 }
 
-func (j *Jobs) start(req JobRequest) (Job, error) {
+func (j *Jobs) start(ctx context.Context, req JobRequest) (Job, error) {
 	req.Mode = strings.ToLower(strings.TrimSpace(req.Mode))
 	switch req.Mode {
 	case "push":
@@ -113,14 +126,14 @@ func (j *Jobs) start(req JobRequest) (Job, error) {
 	if req.SrcPath == "" || req.DestPath == "" {
 		return Job{}, statusErr(400, "srcPath and destPath are required")
 	}
-	return j.launch(req, nil)
+	return j.launch(ctx, req, nil)
 }
 
-func (j *Jobs) startImport(destBase, destDir string, locals []string) (Job, error) {
+func (j *Jobs) startImport(ctx context.Context, destBase, destDir string, locals []string) (Job, error) {
 	if destBase == "" || destDir == "" || len(locals) == 0 {
 		return Job{}, statusErr(400, "import needs a destination and at least one path")
 	}
-	items, err := collectImport(destDir, locals)
+	items, err := collectImport(j.s.rootsFor(ctx), destDir, locals)
 	if err != nil {
 		return Job{}, err
 	}
@@ -134,23 +147,28 @@ func (j *Jobs) startImport(destBase, destDir string, locals []string) (Job, erro
 		DestBaseURL: destBase,
 		Sources:     append([]string(nil), locals...),
 	}
-	return j.launch(req, items)
+	return j.launch(ctx, req, items)
 }
 
-func (j *Jobs) launch(req JobRequest, preset []copyItem) (Job, error) {
+func (j *Jobs) launch(ctx context.Context, req JobRequest, preset []copyItem) (Job, error) {
 	id, err := randID()
 	if err != nil {
 		return Job{}, err
 	}
 	now := time.Now().UTC()
-	ctx, cancel := context.WithCancel(context.Background())
+	roots := j.s.rootsFor(ctx)
+	runCtx, cancel := context.WithCancel(context.Background())
+	runCtx = withRoots(runCtx, roots)
 	run := &runningJob{
 		job: Job{
 			ID: id, Mode: req.Mode, Status: jobRunning,
 			SrcPath: req.SrcPath, DestPath: req.DestPath,
 			SrcBaseURL: req.SrcBaseURL, DestBaseURL: req.DestBaseURL,
-			Sources: append([]string(nil), req.Sources...),
-			Created: now, Updated: now,
+			Sources:    append([]string(nil), req.Sources...),
+			UseRoots:   true,
+			ReadRoots:  append([]string(nil), roots.Read...),
+			WriteRoots: append([]string(nil), roots.Write...),
+			Created:    now, Updated: now,
 		},
 		cancel: cancel,
 		done:   map[string]struct{}{},
@@ -158,7 +176,8 @@ func (j *Jobs) launch(req JobRequest, preset []copyItem) (Job, error) {
 	j.mu.Lock()
 	j.all[id] = run
 	j.mu.Unlock()
-	go j.execute(ctx, run, preset)
+	j.save()
+	go j.execute(runCtx, run, preset)
 	return run.snapshot(), nil
 }
 
@@ -167,13 +186,16 @@ func (j *Jobs) cancel(id string) (Job, error) {
 	if run == nil {
 		return Job{}, statusErr(404, "job not found")
 	}
-	run.cancel()
+	if run.cancel != nil {
+		run.cancel()
+	}
 	run.update(func(job *Job) {
 		if job.Status == jobRunning || job.Status == jobQueued {
 			job.Status = jobCanceled
 			job.Error = "canceled"
 		}
 	})
+	j.save()
 	return run.snapshot(), nil
 }
 
@@ -191,6 +213,11 @@ func (j *Jobs) resume(id string) (Job, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	run.mu.Lock()
+	if run.job.UseRoots {
+		ctx = withRoots(ctx, Roots{Read: run.job.ReadRoots, Write: run.job.WriteRoots})
+	} else {
+		ctx = withRoots(ctx, j.s.roots)
+	}
 	run.cancel = cancel
 	run.job.Status = jobRunning
 	run.job.Error = ""
@@ -200,6 +227,7 @@ func (j *Jobs) resume(id string) (Job, error) {
 		run.done[p] = struct{}{}
 	}
 	run.mu.Unlock()
+	j.save()
 	go j.execute(ctx, run, nil)
 	return run.snapshot(), nil
 }
@@ -227,6 +255,7 @@ func (j *Jobs) execute(ctx context.Context, run *runningJob, preset []copyItem) 
 			}
 		}
 	})
+	j.save()
 }
 
 func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) error {
@@ -235,6 +264,10 @@ func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) 
 	if err != nil {
 		return err
 	}
+	if err := j.reconcileSource(run, items); err != nil {
+		return err
+	}
+	j.save()
 	var total int64
 	files := 0
 	for _, it := range items {
@@ -289,7 +322,7 @@ func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) 
 			}
 			continue
 		}
-		up, err := dest.StartUpload(ctx, it.Dest, it.Size, "")
+		up, err := dest.StartUpload(ctx, it.Dest, it.Size, it.MtimeUnix, "")
 		if err != nil {
 			return err
 		}
@@ -313,7 +346,11 @@ func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) 
 		if err != nil {
 			return err
 		}
-		if err := dest.FinishUpload(ctx, up.ID); err != nil {
+		sum, err := j.hashSource(ctx, snap.Mode, src, it)
+		if err != nil {
+			return err
+		}
+		if err := dest.FinishUpload(ctx, up.ID, sum); err != nil {
 			return err
 		}
 		run.mu.Lock()
@@ -327,6 +364,7 @@ func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) 
 		run.job.CurrentUpload = ""
 		run.job.Updated = time.Now().UTC()
 		run.mu.Unlock()
+		j.save()
 	}
 	return nil
 }
@@ -348,9 +386,10 @@ func (j *Jobs) plan(ctx context.Context, snap Job, preset []copyItem) ([]copyIte
 	if preset != nil {
 		return preset, nil
 	}
+	roots := j.s.rootsFor(ctx)
 	switch snap.Mode {
 	case "push":
-		return collectLocal(j.s.roots, snap.SrcPath, snap.DestPath)
+		return collectLocal(roots, snap.SrcPath, snap.DestPath)
 	case "pull":
 		src, err := j.s.openRemote(snap.SrcBaseURL)
 		if err != nil {
@@ -362,7 +401,7 @@ func (j *Jobs) plan(ctx context.Context, snap Job, preset []copyItem) ([]copyIte
 		if len(sources) == 0 && snap.SrcPath != "" {
 			sources = []string{snap.SrcPath}
 		}
-		return collectImport(snap.DestPath, sources)
+		return collectImport(roots, snap.DestPath, sources)
 	default:
 		return nil, statusErr(400, "unknown mode")
 	}
@@ -461,7 +500,8 @@ func collectLocal(roots Roots, src, dest string) ([]copyItem, error) {
 			return nil, errNotFile
 		}
 		return []copyItem{{
-			Rel: BaseRemote(dest), Size: info.Size(), Local: walkRoot, Dest: dest,
+			Rel: BaseRemote(dest), Size: info.Size(), MtimeUnix: info.ModTime().UnixNano(),
+			Local: walkRoot, Dest: dest,
 		}}, nil
 	}
 	items := []copyItem{{Rel: ".", IsDir: true, Dest: dest}}
@@ -489,7 +529,7 @@ func collectLocal(roots Roots, src, dest string) ([]copyItem, error) {
 		if err != nil {
 			return err
 		}
-		items = append(items, copyItem{Rel: rel, Size: st.Size(), Local: path, Dest: target})
+		items = append(items, copyItem{Rel: rel, Size: st.Size(), MtimeUnix: st.ModTime().UnixNano(), Local: path, Dest: target})
 		return nil
 	})
 	return items, err
@@ -502,7 +542,8 @@ func collectRemote(ctx context.Context, api NodeAPI, src, dest string) ([]copyIt
 	}
 	if !st.IsDir {
 		return []copyItem{{
-			Rel: BaseRemote(dest), Size: st.Size, Remote: st.Path, Dest: dest,
+			Rel: BaseRemote(dest), Size: st.Size, MtimeUnix: st.ModTime.UnixNano(),
+			Remote: st.Path, Dest: dest,
 		}}, nil
 	}
 	var items []copyItem
@@ -532,7 +573,7 @@ func collectRemote(ctx context.Context, api NodeAPI, src, dest string) ([]copyIt
 			if e.IsSymlink || e.Size < 0 {
 				continue
 			}
-			items = append(items, copyItem{Rel: childRel, Size: e.Size, Remote: e.Path, Dest: childDest})
+			items = append(items, copyItem{Rel: childRel, Size: e.Size, MtimeUnix: e.ModTime.UnixNano(), Remote: e.Path, Dest: childDest})
 		}
 		return nil
 	}
@@ -542,14 +583,10 @@ func collectRemote(ctx context.Context, api NodeAPI, src, dest string) ([]copyIt
 	return items, nil
 }
 
-func collectImport(destDir string, locals []string) ([]copyItem, error) {
+func collectImport(roots Roots, destDir string, locals []string) ([]copyItem, error) {
 	var items []copyItem
 	for _, local := range locals {
-		abs, err := filepath.Abs(local)
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(abs)
+		resolved, info, err := guardImport(roots, local)
 		if err != nil {
 			return nil, err
 		}
@@ -558,15 +595,22 @@ func collectImport(destDir string, locals []string) ([]copyItem, error) {
 				continue
 			}
 			items = append(items, copyItem{
-				Rel: filepath.Base(abs), Size: info.Size(), Local: abs,
-				Dest: JoinRemote(destDir, filepath.Base(abs)),
+				Rel: filepath.Base(resolved), Size: info.Size(), MtimeUnix: info.ModTime().UnixNano(),
+				Local: resolved, Dest: JoinRemote(destDir, filepath.Base(resolved)),
 			})
 			continue
 		}
-		baseParent := filepath.Dir(abs)
-		err = filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
+		baseParent := filepath.Dir(resolved)
+		err = filepath.WalkDir(resolved, func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			real, err := filepath.EvalSymlinks(path)
+			if err != nil {
+				return err
+			}
+			if !roots.canRead(real) {
+				return errForbidden
 			}
 			rel, err := filepath.Rel(baseParent, path)
 			if err != nil {
@@ -585,7 +629,9 @@ func collectImport(destDir string, locals []string) ([]copyItem, error) {
 			if err != nil {
 				return err
 			}
-			items = append(items, copyItem{Rel: rel, Size: st.Size(), Local: path, Dest: target})
+			items = append(items, copyItem{
+				Rel: rel, Size: st.Size(), MtimeUnix: st.ModTime().UnixNano(), Local: real, Dest: target,
+			})
 			return nil
 		})
 		if err != nil {
@@ -593,4 +639,159 @@ func collectImport(destDir string, locals []string) ([]copyItem, error) {
 		}
 	}
 	return items, nil
+}
+
+func guardImport(roots Roots, local string) (string, os.FileInfo, error) {
+	abs, err := filepath.Abs(local)
+	if err != nil {
+		return "", nil, err
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", nil, err
+	}
+	if !roots.canRead(resolved) {
+		return "", nil, errForbidden
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", nil, err
+	}
+	return resolved, info, nil
+}
+
+func (j *Jobs) reconcileSource(run *runningJob, items []copyItem) error {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if len(run.job.Stamps) == 0 {
+		run.job.Stamps = stampsOf(items)
+		run.job.Updated = time.Now().UTC()
+		return nil
+	}
+	prev := map[string]SourceStamp{}
+	for _, st := range run.job.Stamps {
+		prev[st.Rel] = st
+	}
+	changed := false
+	for _, it := range items {
+		if it.IsDir {
+			continue
+		}
+		old, ok := prev[it.Rel]
+		if !ok || old.Size != it.Size || (it.MtimeUnix != 0 && old.MtimeUnix != it.MtimeUnix) {
+			if _, done := run.done[it.Rel]; done {
+				delete(run.done, it.Rel)
+			}
+			changed = true
+		}
+	}
+	if changed {
+		run.job.DonePaths = run.job.DonePaths[:0]
+		for p := range run.done {
+			run.job.DonePaths = append(run.job.DonePaths, p)
+		}
+		run.job.Updated = time.Now().UTC()
+	}
+	run.job.Stamps = stampsOf(items)
+	return nil
+}
+
+func stampsOf(items []copyItem) []SourceStamp {
+	out := make([]SourceStamp, 0, len(items))
+	for _, it := range items {
+		if it.IsDir {
+			continue
+		}
+		out = append(out, SourceStamp{Rel: it.Rel, Size: it.Size, MtimeUnix: it.MtimeUnix})
+	}
+	return out
+}
+
+func (j *Jobs) hashSource(ctx context.Context, mode string, src NodeAPI, it copyItem) (string, error) {
+	if mode == "pull" {
+		rc, _, err := src.Open(ctx, it.Remote, 0, -1)
+		if err != nil {
+			return "", err
+		}
+		defer rc.Close()
+		return hashReader(rc)
+	}
+	return hashFile(it.Local)
+}
+
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	return hashReader(f)
+}
+
+func hashReader(r io.Reader) (string, error) {
+	h := sha256.New()
+	if _, err := io.Copy(h, r); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func (j *Jobs) save() {
+	if j == nil || j.statePath == "" {
+		return
+	}
+	j.mu.Lock()
+	jobs := make([]Job, 0, len(j.all))
+	for _, r := range j.all {
+		jobs = append(jobs, r.snapshot())
+	}
+	path := j.statePath
+	j.mu.Unlock()
+	raw, err := json.MarshalIndent(struct {
+		Jobs []Job `json:"jobs"`
+	}{Jobs: jobs}, "", "  ")
+	if err != nil {
+		log.Printf("tailfile: persist jobs: %v", err)
+		return
+	}
+	if err := writeSecret(path, raw); err != nil {
+		log.Printf("tailfile: persist jobs: %v", err)
+	}
+}
+
+func (j *Jobs) load() error {
+	if j.statePath == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(j.statePath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var disk struct {
+		Jobs []Job `json:"jobs"`
+	}
+	if err := json.Unmarshal(raw, &disk); err != nil {
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, job := range disk.Jobs {
+		if job.ID == "" {
+			continue
+		}
+		if job.Status == jobRunning || job.Status == jobQueued {
+			job.Status = jobInterrupted
+			if job.Error == "" {
+				job.Error = "agent restarted"
+			}
+		}
+		j.all[job.ID] = &runningJob{job: job, done: map[string]struct{}{}}
+		for _, p := range job.DonePaths {
+			j.all[job.ID].done[p] = struct{}{}
+		}
+	}
+	return nil
 }

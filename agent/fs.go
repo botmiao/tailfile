@@ -35,7 +35,11 @@ func (s *Server) Info() Info {
 }
 
 func (s *Server) List(path string) (Listing, error) {
-	clean, err := s.roots.Resolve(path, false)
+	return s.list(s.roots, path)
+}
+
+func (s *Server) list(roots Roots, path string) (Listing, error) {
+	clean, err := roots.Resolve(path, false)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -43,7 +47,7 @@ func (s *Server) List(path string) (Listing, error) {
 	if err != nil {
 		return Listing{}, err
 	}
-	if !s.roots.canRead(resolved) {
+	if !roots.canRead(resolved) {
 		return Listing{}, errForbidden
 	}
 	entries, err := os.ReadDir(resolved)
@@ -72,7 +76,7 @@ func (s *Server) List(path string) (Listing, error) {
 			if target, err := os.Readlink(full); err == nil {
 				ent.LinkTarget = target
 			}
-			if resolved, err := filepath.EvalSymlinks(full); err == nil && s.roots.canRead(resolved) {
+			if resolved, err := filepath.EvalSymlinks(full); err == nil && roots.canRead(resolved) {
 				if st, err := os.Stat(resolved); err == nil && st.IsDir() {
 					ent.IsDir = true
 					ent.Size = st.Size()
@@ -93,7 +97,11 @@ func (s *Server) List(path string) (Listing, error) {
 }
 
 func (s *Server) Stat(path string) (Entry, error) {
-	clean, err := s.roots.Resolve(path, false)
+	return s.stat(s.roots, path)
+}
+
+func (s *Server) stat(roots Roots, path string) (Entry, error) {
+	clean, err := roots.Resolve(path, false)
 	if err != nil {
 		return Entry{}, err
 	}
@@ -113,7 +121,7 @@ func (s *Server) Stat(path string) (Entry, error) {
 		ent.IsSymlink = true
 		ent.LinkTarget, _ = os.Readlink(clean)
 		ent.IsDir = false
-		if resolved, err := filepath.EvalSymlinks(clean); err == nil && s.roots.canRead(resolved) {
+		if resolved, err := filepath.EvalSymlinks(clean); err == nil && roots.canRead(resolved) {
 			if st, err := os.Stat(resolved); err == nil {
 				ent.IsDir = st.IsDir()
 				ent.Size = st.Size()
@@ -127,7 +135,11 @@ func (s *Server) Stat(path string) (Entry, error) {
 // Open returns a reader for the byte range [start, end] inclusive.
 // end < 0 means through EOF. The caller must close the reader.
 func (s *Server) Open(path string, start, end int64) (io.ReadCloser, int64, int64, error) {
-	clean, err := s.roots.Resolve(path, false)
+	return s.open(s.roots, path, start, end)
+}
+
+func (s *Server) open(roots Roots, path string, start, end int64) (io.ReadCloser, int64, int64, error) {
+	clean, err := roots.Resolve(path, false)
 	if err != nil {
 		return nil, 0, 0, err
 	}
@@ -135,7 +147,7 @@ func (s *Server) Open(path string, start, end int64) (io.ReadCloser, int64, int6
 	if err != nil {
 		return nil, 0, 0, err
 	}
-	if !s.roots.canRead(resolved) {
+	if !roots.canRead(resolved) {
 		return nil, 0, 0, errForbidden
 	}
 	f, err := os.Open(resolved)
@@ -178,7 +190,11 @@ func (s *Server) Open(path string, start, end int64) (io.ReadCloser, int64, int6
 }
 
 func (s *Server) Mkdir(path string) error {
-	clean, err := s.roots.Resolve(path, true)
+	return s.mkdir(s.roots, path)
+}
+
+func (s *Server) mkdir(roots Roots, path string) error {
+	clean, err := roots.Resolve(path, true)
 	if err != nil {
 		return err
 	}
@@ -186,11 +202,15 @@ func (s *Server) Mkdir(path string) error {
 }
 
 func (s *Server) Rename(from, to string) error {
-	src, err := s.roots.Resolve(from, true)
+	return s.rename(s.roots, from, to)
+}
+
+func (s *Server) rename(roots Roots, from, to string) error {
+	src, err := roots.Resolve(from, true)
 	if err != nil {
 		return err
 	}
-	dst, err := s.roots.Resolve(to, true)
+	dst, err := roots.Resolve(to, true)
 	if err != nil {
 		return err
 	}

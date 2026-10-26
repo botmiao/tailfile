@@ -19,7 +19,9 @@ jobs:
         run: |
           go test -count=1 -race -timeout 180s .
           CGO_ENABLED=0 go build -o /tmp/tailfile-agent ./cmd/tailfile-agent
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/tailfile-agent-arm64 ./cmd/tailfile-agent
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-agent.exe ./cmd/tailfile-agent
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o /tmp/tailfile-agent-arm64.exe ./cmd/tailfile-agent
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/tailfile-agent-darwin ./cmd/tailfile-agent
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/tailfile-agent-darwin-arm64 ./cmd/tailfile-agent
 
@@ -37,7 +39,9 @@ jobs:
         run: |
           go test -count=1 -timeout 180s .
           CGO_ENABLED=0 go build -o /tmp/tailfile-mygo .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/tailfile-mygo-arm64 .
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-mygo.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o /tmp/tailfile-mygo-arm64.exe .
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/tailfile-mygo-darwin .
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/tailfile-mygo-darwin-arm64 .
 
@@ -60,10 +64,13 @@ jobs:
           GOWORK: "off"
         run: |
           CGO_ENABLED=0 go build -tags server -o /tmp/tailfile-wails .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -tags server -o /tmp/tailfile-wails-arm64 .
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags server -o /tmp/tailfile-wails.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -tags server -o /tmp/tailfile-wails-arm64.exe .
           CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -tags server -o /tmp/tailfile-wails-darwin .
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -tags server -o /tmp/tailfile-wails-darwin-arm64 .
           CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-wails-desktop.exe .
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o /tmp/tailfile-wails-desktop-arm64.exe .
 
   wails-desktop-linux:
     runs-on: ubuntu-24.04

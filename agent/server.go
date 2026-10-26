@@ -2,10 +2,11 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"log"
-	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 )
@@ -37,6 +38,11 @@ type Server struct {
 
 	mu    sync.Mutex
 	owner string
+
+	// guiToken is the per-start bearer for the localhost listener.
+	// It is never logged. An empty token fails closed.
+	guiToken string
+	stateDir string
 
 	cacheDir string
 	selfID   string
@@ -70,6 +76,68 @@ func newServer(name, mode, owner string, roots Roots, chunk int) *Server {
 	return s
 }
 
+func (s *Server) attachState(dir string) error {
+	if dir == "" {
+		return nil
+	}
+	s.stateDir = dir
+	s.jobs.statePath = filepath.Join(dir, "jobs.json")
+	if err := s.jobs.load(); err != nil {
+		return err
+	}
+	return s.loadTracks()
+}
+
+func (s *Server) saveTracks() {
+	if s.stateDir == "" {
+		return
+	}
+	s.trackMu.Lock()
+	recs := make([]transferRec, 0, len(s.tracks))
+	for _, rec := range s.tracks {
+		recs = append(recs, rec)
+	}
+	s.trackMu.Unlock()
+	raw, err := json.MarshalIndent(struct {
+		Transfers []transferRec `json:"transfers"`
+	}{Transfers: recs}, "", "  ")
+	if err != nil {
+		log.Printf("tailfile: persist transfers: %v", err)
+		return
+	}
+	if err := writeSecret(filepath.Join(s.stateDir, "transfers.json"), raw); err != nil {
+		log.Printf("tailfile: persist transfers: %v", err)
+	}
+}
+
+func (s *Server) loadTracks() error {
+	if s.stateDir == "" {
+		return nil
+	}
+	raw, err := os.ReadFile(filepath.Join(s.stateDir, "transfers.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var disk struct {
+		Transfers []transferRec `json:"transfers"`
+	}
+	if err := json.Unmarshal(raw, &disk); err != nil {
+		return err
+	}
+	s.trackMu.Lock()
+	defer s.trackMu.Unlock()
+	for _, rec := range disk.Transfers {
+		if rec.ID == "" {
+			continue
+		}
+		s.tracks[rec.ID] = rec
+	}
+	return nil
+}
+
 func (s *Server) openRemote(base string) (NodeAPI, error) {
 	base = strings.TrimRight(base, "/")
 	if s.remoteOverride != nil {
@@ -97,16 +165,13 @@ func (s *Server) LocalHandler() http.Handler {
 func (s *Server) withAuth(local bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if local {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, HEAD, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Range, Upload-Offset, X-Chunk-SHA256")
-			w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type")
-			if r.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
+			setLocalCORS(w, r)
 			if err := s.allowLocal(r); err != nil {
 				writeErr(w, err)
+				return
+			}
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
 				return
 			}
 		} else {
@@ -119,16 +184,22 @@ func (s *Server) withAuth(local bool, next http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) allowLocal(r *http.Request) error {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
+type rootCtxKey struct{}
+
+func withRoots(ctx context.Context, roots Roots) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	ip := net.ParseIP(host)
-	if ip == nil || !ip.IsLoopback() {
-		return statusErr(403, "localhost only")
+	return context.WithValue(ctx, rootCtxKey{}, roots)
+}
+
+func (s *Server) rootsFor(ctx context.Context) Roots {
+	if ctx != nil {
+		if roots, ok := ctx.Value(rootCtxKey{}).(Roots); ok {
+			return roots
+		}
 	}
-	return nil
+	return s.roots
 }
 
 func (s *Server) authenticateTailnet(r *http.Request) (Identity, error) {
@@ -138,6 +209,15 @@ func (s *Server) authenticateTailnet(r *http.Request) (Identity, error) {
 	id, err := s.whois(r)
 	if err != nil {
 		return Identity{}, statusErr(401, "not authenticated: %v", err)
+	}
+	if id.GrantPresent {
+		grants, err := parseGrants(id.GrantRaw)
+		if err != nil {
+			return Identity{}, err
+		}
+		narrowed := narrowToGrant(s.roots, grants)
+		*r = *r.WithContext(withRoots(r.Context(), narrowed))
+		return id, nil
 	}
 	owner := s.ownerLogin()
 	if owner == "" {
