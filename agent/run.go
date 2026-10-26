@@ -28,6 +28,8 @@ type Config struct {
 	AuthKey    string
 	ChunkSize  int
 	Ephemeral  bool
+	// Net is auto, system, or tsnet. Empty means auto.
+	Net string
 }
 
 var userHomeDir = os.UserHomeDir
@@ -98,6 +100,14 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.Owner == "" {
 		c.Owner = os.Getenv("TAILFILE_OWNER")
+	}
+	switch strings.ToLower(strings.TrimSpace(c.Net)) {
+	case "", netAuto:
+		c.Net = netAuto
+	case netSystem, netTsnet:
+		c.Net = strings.ToLower(c.Net)
+	default:
+		return fmt.Errorf("-net must be auto, system, or tsnet, not %q", c.Net)
 	}
 	if c.StateDir == "" {
 		dir, err := DefaultStateDir(c.Hostname)

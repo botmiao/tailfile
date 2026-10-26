@@ -2,9 +2,11 @@
 
 Both shells implement the same agent calls: node tree, file list, text / image / PDF preview, push and pull paste, progress, cancel, resume, mkdir, rename, import of a local path, and cache plus reveal. The agent is shared. The difference is the window.
 
-Measured on Ubuntu 24.04, linux/amd64, Go 1.27.3, Wails v3.0.0, MyGo v0.6.4. Sizes are the binaries `scripts/build-all.sh` writes under `build-out/` (that directory is gitignored). Re-run the script before trusting a number you did not just produce. The figures below are from the hardening pass.
+Measured on Ubuntu 24.04, linux/amd64, Go 1.27.3, Wails v3.0.0, MyGo v0.6.4. Sizes are the binaries `scripts/build-all.sh` writes under `build-out/` (that directory is gitignored). Re-run the script before trusting a number you did not just produce. The figures below are from the system-tailscaled pass.
 
 Both GUIs preview a file as soon as it is selected. Neither had a way to turn that off. Each now has a Preview on / Preview off control, default on, persisted in the browser (`localStorage` key `tailfile.preview`) or, for MyGo, in `UserConfigDir/tailfile/mygo-preview`. The localhost API requires the per-start bearer, so image and PDF bytes are fetched with `Authorization` instead of a bare URL.
+
+The agent can ride the machine's existing tailscaled (`-net system` or `-net auto` when LocalAPI reports `Running` and a Tailscale IP) or embed its own tsnet node (`-net tsnet`, and the auto fallback). The GUI still talks only to `127.0.0.1:8645`. System mode was not run against a live tailnet here; the tests use a fake LocalAPI.
 
 ## What was actually built and run
 
@@ -18,7 +20,7 @@ Both GUIs preview a file as soon as it is selected. Neither had a way to turn th
 | Wails desktop linux (GTK 4.14.5, WebKitGTK 2.52.6) | yes, cgo | process stayed up under Xvfb until killed. Widgets were not clicked. libEGL warned that DRI3 was missing. |
 | Wails desktop windows amd64 and arm64 | yes, `CGO_ENABLED=0` cross-compile | no |
 | Wails desktop darwin | no | clang on Linux rejects `-arch` for the Cocoa/WebKit cgo |
-| Real tsnet login, two physical machines | no | no auth key in this environment |
+| Real tsnet login, or system mode against a live tailscaled | no | no auth key and no tailscaled in this environment |
 | Windows, macOS, Hyprland GUI | no | you have to do this |
 
 A green cross-compile is not a working window. WebView2, Cocoa, and Hyprland were not executed.
@@ -27,8 +29,8 @@ A green cross-compile is not a working window. WebView2, Cocoa, and Hyprland wer
 
 | Piece | Lines |
 | --- | --- |
-| `agent/` production Go | 4972 |
-| `agent/` tests | 1046 |
+| `agent/` production Go | 5388 |
+| `agent/` tests | 1436 |
 | `gui-mygo/` production Go | 1067 |
 | `gui-mygo/` test | 28 |
 | `gui-wails/` Go (window, drop, token inject) | 179 |
@@ -38,27 +40,27 @@ Wails puts the file manager in the web UI, so the Go side stays a shell. MyGo pu
 
 ## Binary size (bytes)
 
-Agent, stripped of nothing, tsnet linked in:
+Agent, stripped of nothing. tsnet stays linked because `-net auto` falls back to it:
 
 | OS | bytes |
 | --- | --- |
-| linux/amd64 | 33159793 |
-| linux/arm64 | 30898170 |
-| windows/amd64 | 33159168 |
-| windows/arm64 | 30593024 |
-| darwin/amd64 | 32745520 |
-| darwin/arm64 | 30820818 |
+| linux/amd64 | 33201833 |
+| linux/arm64 | 30972474 |
+| windows/amd64 | 33198592 |
+| windows/arm64 | 30628352 |
+| darwin/amd64 | 32793024 |
+| darwin/arm64 | 30872818 |
 
 MyGo (pure Go, tsnet not linked; it is only an HTTP client of the local agent):
 
 | OS | bytes |
 | --- | --- |
-| linux/amd64 | 35704864 |
-| linux/arm64 | 33175516 |
-| windows/amd64 | 36030464 |
+| linux/amd64 | 35704304 |
+| linux/arm64 | 33175036 |
+| windows/amd64 | 36028928 |
 | windows/arm64 | 33138176 |
-| darwin/amd64 | 35697600 |
-| darwin/arm64 | 33499138 |
+| darwin/amd64 | 35697536 |
+| darwin/arm64 | 33499074 |
 
 Wails server mode (pure Go, assets embedded, tsnet not linked; it only imports the token-path helper):
 

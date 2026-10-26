@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -11,27 +13,148 @@ import (
 	"time"
 
 	"tailscale.com/client/local"
+	"tailscale.com/client/tailscale/apitype"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 )
 
 func runTailnet(ctx context.Context, cfg Config) error {
-	roots := Roots{Read: cfg.ReadRoots, Write: cfg.WriteRoots}
-	srv := newServer(cfg.Hostname, "tsnet", cfg.Owner, roots, cfg.ChunkSize)
-	cacheDir, err := DefaultCacheDir()
+	srv, err := prepareNode(cfg)
 	if err != nil {
 		return err
+	}
+	choice, err := chooseNetMode(ctx, cfg.Net, probeSystemTailscaled)
+	if err != nil {
+		return err
+	}
+	log.Printf("tailfile: network mode %s (%s)", choice.Mode, choice.Why)
+
+	var backend tailBackend
+	switch choice.Mode {
+	case netSystem:
+		backend = &systemBackend{lc: choice.Client, port: cfg.Port}
+		srv.mode = netSystem
+	case netTsnet:
+		b, err := startTsnet(cfg)
+		if err != nil {
+			return err
+		}
+		backend = b
+		srv.mode = netTsnet
+	default:
+		return fmt.Errorf("unknown network mode %q", choice.Mode)
+	}
+	defer backend.Close()
+
+	srv.whois = whoIsFunc(backend.Local())
+	srv.outbound = backend.HTTP()
+	srv.resolver = &tsResolver{lc: backend.Local(), srv: srv, port: cfg.Port, http: backend.HTTP()}
+
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	ownerErr := make(chan error, 1)
+	go func() {
+		if err := watchOwner(runCtx, backend.Local(), srv, cfg.Owner); err != nil {
+			log.Printf("tailfile: %v", err)
+			ownerErr <- err
+			cancelRun()
+		}
+	}()
+	backendErr := make(chan error, 1)
+	go func() {
+		if err := backend.Serve(runCtx, srv.TailnetHandler()); err != nil && runCtx.Err() == nil {
+			log.Printf("tailfile tailnet: %v", err)
+			backendErr <- err
+			cancelRun()
+		}
+	}()
+
+	log.Printf("tailfile %s GUI on http://%s (tailnet port %d, mode %s)", cfg.Hostname, cfg.LocalAddr, cfg.Port, backend.Mode())
+	log.Printf("state: %s", cfg.StateDir)
+	log.Printf("drag-out cache: %s", srv.cacheDir)
+	if len(cfg.WriteRoots) == 0 {
+		log.Printf("writes are disabled — pass -write to allow paste onto this node")
+	}
+
+	localErr := serveLocal(runCtx, cfg.LocalAddr, srv.LocalHandler())
+	cancelRun()
+	select {
+	case err := <-backendErr:
+		return err
+	default:
+	}
+	select {
+	case oerr := <-ownerErr:
+		return oerr
+	default:
+		return localErr
+	}
+}
+
+func prepareNode(cfg Config) (*Server, error) {
+	roots := Roots{Read: cfg.ReadRoots, Write: cfg.WriteRoots}
+	srv := newServer(cfg.Hostname, "", cfg.Owner, roots, cfg.ChunkSize)
+	cacheDir, err := DefaultCacheDir()
+	if err != nil {
+		return nil, err
 	}
 	srv.cacheDir = cacheDir
 	if err := srv.attachState(cfg.StateDir); err != nil {
-		return err
+		return nil, err
 	}
 	token, err := writeGUIToken(cfg.StateDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	srv.guiToken = token
+	return srv, nil
+}
+
+func whoIsFunc(lc *local.Client) func(*http.Request) (Identity, error) {
+	return func(r *http.Request) (Identity, error) {
+		if lc == nil {
+			return Identity{}, statusErr(401, "not authenticated")
+		}
+		who, err := lc.WhoIs(r.Context(), r.RemoteAddr)
+		if err != nil {
+			return Identity{}, err
+		}
+		return identityFromWhoIs(who), nil
+	}
+}
+
+func identityFromWhoIs(who *apitype.WhoIsResponse) Identity {
+	id := Identity{}
+	if who == nil {
+		return id
+	}
+	if who.UserProfile != nil {
+		id.Login = who.UserProfile.LoginName
+		id.UserID = fmt.Sprint(who.UserProfile.ID)
+	}
+	if who.Node != nil {
+		id.NodeName = who.Node.ComputedName
+		id.NodeID = string(who.Node.StableID)
+	}
+	cap := tailcfg.PeerCapability(TailfileCap)
+	if who.CapMap.HasCapability(cap) {
+		id.GrantPresent = true
+		for _, raw := range who.CapMap[cap] {
+			id.GrantRaw = append(id.GrantRaw, append([]byte(nil), raw...))
+		}
+	}
+	return id
+}
+
+type tsnetBackend struct {
+	ts   *tsnet.Server
+	ln   net.Listener
+	lc   *local.Client
+	http *http.Client
+}
+
+func startTsnet(cfg Config) (*tsnetBackend, error) {
 	ts := &tsnet.Server{
 		Hostname:  cfg.Hostname,
 		Dir:       cfg.StateDir,
@@ -48,74 +171,36 @@ func runTailnet(ctx context.Context, cfg Config) error {
 	ln, err := ts.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {
 		_ = ts.Close()
-		return fmt.Errorf("tsnet listen: %w", err)
+		return nil, fmt.Errorf("tsnet listen: %w", err)
 	}
 	lc, err := ts.LocalClient()
 	if err != nil {
 		ln.Close()
 		_ = ts.Close()
-		return err
+		return nil, err
 	}
-	srv.whois = func(r *http.Request) (Identity, error) {
-		who, err := lc.WhoIs(r.Context(), r.RemoteAddr)
-		if err != nil {
-			return Identity{}, err
-		}
-		id := Identity{}
-		if who.UserProfile != nil {
-			id.Login = who.UserProfile.LoginName
-			id.UserID = fmt.Sprint(who.UserProfile.ID)
-		}
-		if who.Node != nil {
-			id.NodeName = who.Node.ComputedName
-			id.NodeID = string(who.Node.StableID)
-		}
-		cap := tailcfg.PeerCapability(TailfileCap)
-		if who.CapMap.HasCapability(cap) {
-			id.GrantPresent = true
-			for _, raw := range who.CapMap[cap] {
-				id.GrantRaw = append(id.GrantRaw, append([]byte(nil), raw...))
-			}
-		}
-		return id, nil
-	}
-	srv.outbound = ts.HTTPClient()
-	res := &tsResolver{lc: lc, srv: srv, port: cfg.Port, http: srv.outbound}
-	srv.resolver = res
+	return &tsnetBackend{ts: ts, ln: ln, lc: lc, http: ts.HTTPClient()}, nil
+}
 
-	runCtx, cancelRun := context.WithCancel(ctx)
-	defer cancelRun()
-	ownerErr := make(chan error, 1)
-	go func() {
-		if err := watchOwner(runCtx, lc, srv, cfg.Owner); err != nil {
-			log.Printf("tailfile: %v", err)
-			ownerErr <- err
-			cancelRun()
-		}
-	}()
+func (b *tsnetBackend) Mode() string         { return netTsnet }
+func (b *tsnetBackend) Local() *local.Client { return b.lc }
+func (b *tsnetBackend) HTTP() *http.Client   { return b.http }
+func (b *tsnetBackend) Close() error         { return b.ts.Close() }
 
-	tail := &http.Server{Handler: srv.TailnetHandler(), ReadHeaderTimeout: 10 * time.Second}
-	go func() {
-		if err := tail.Serve(ln); err != nil && err != http.ErrServerClosed {
-			log.Printf("tailfile tailnet http: %v", err)
-		}
-	}()
-	log.Printf("tailfile %s listening on the tailnet :%d and http://%s", cfg.Hostname, cfg.Port, cfg.LocalAddr)
-	log.Printf("state: %s", cfg.StateDir)
-	log.Printf("drag-out cache: %s", srv.cacheDir)
-	if len(cfg.WriteRoots) == 0 {
-		log.Printf("writes are disabled — pass -write to allow paste onto this node")
-	}
-
-	err = serveLocal(runCtx, cfg.LocalAddr, srv.LocalHandler())
-	shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	_ = tail.Shutdown(shut)
-	_ = ts.Close()
+func (b *tsnetBackend) Serve(ctx context.Context, h http.Handler) error {
+	tail := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
+	errc := make(chan error, 1)
+	go func() { errc <- tail.Serve(b.ln) }()
 	select {
-	case oerr := <-ownerErr:
-		return oerr
-	default:
+	case <-ctx.Done():
+		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = tail.Shutdown(shut)
+		return nil
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
 		return err
 	}
 }

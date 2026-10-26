@@ -14,12 +14,12 @@ gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
 
 | Path | What it is |
 | --- | --- |
-| `agent/` | Shared Go module. File API, resumable chunks, copy jobs, tsnet. |
+| `agent/` | Shared Go module. File API, resumable chunks, copy jobs, system tailscaled or tsnet. |
 | `gui-wails/` | [Wails v3](https://v3.wails.io) shell. React UI, also runnable in a browser (`-tags server`). |
 | `gui-mygo/` | [MyGo](https://mygo.egoist.dev) shell. Native tree, table, and drag-out. |
 | `COMPARISON.md` | What each framework actually did in this spike. |
 
-Both GUIs talk to the agent at `http://127.0.0.1:8645`. They do not embed a second tsnet node. Run one agent per machine.
+Both GUIs talk to the agent at `http://127.0.0.1:8645`. They do not embed a tailnet node of their own. Run one agent per machine. The GUI API is the same whether the agent is using the system tailscaled or an embedded tsnet node.
 
 Requires **Go 1.27.3** (MyGo v0.6.4 will not build on older Go). Wails v3.0.0 wants Go 1.26 or newer. The frontend wants Node 22 if you change the Wails UI. `go.work` ties the three modules together.
 
@@ -31,7 +31,7 @@ go build -o tailfile-agent ./cmd/tailfile-agent
 ./tailfile-agent -demo
 ```
 
-`-demo` starts three in-process nodes, `alpha` and `beta` (writable) and `gamma` (read-only), owned by `ada@example.com`. Nothing joins a tailnet. The API is on `http://127.0.0.1:8645`.
+`-demo` starts three in-process nodes, `alpha` and `beta` (writable) and `gamma` (read-only), owned by `ada@example.com`. Nothing joins a tailnet. The API is on `http://127.0.0.1:8645`. `-demo` ignores `-net`.
 
 Wails in the browser (no GTK, no window):
 
@@ -65,19 +65,35 @@ npm run build
 
 On each machine, pick the folders the agent may read and the folders it may write. With no `-write` list the node is read-only. With no `-read` list the agent creates `~/Tailfile` (mode `0700`) and shares only that directory. Demo mode does not use that default; it shares the temporary fixture directories.
 
+`-net` chooses how the agent joins the tailnet:
+
+| Value | Behavior |
+| --- | --- |
+| `auto` (default) | If a local tailscaled answers its LocalAPI, is `Running`, and has a Tailscale IP, use system mode. Otherwise embed tsnet. The log says which one and why. |
+| `system` | Use the tailscaled already running on this machine. Do not start a second node. |
+| `tsnet` | Embed a tailscale.com/tsnet node. This is a separate node from the system tailscaled. |
+
 ```sh
+# Prefer the machine's own tailscaled. No auth key.
+./tailfile-agent -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
+
+# Force an embedded node.
 export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the command line if you can avoid it
-./tailfile-agent \
+./tailfile-agent -net tsnet \
   -hostname my-laptop \
-  -read "$HOME" \
+  -read "$HOME/Tailfile" \
   -write "$HOME/Tailfile"
 ```
 
-`-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` so the key stays out of shell history. An empty key makes tsnet print an interactive login URL; open it in a browser. State (the node key) lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or `-state`. Do not commit that directory.
+`-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` so the key stays out of shell history. An empty key makes tsnet print an interactive login URL; open it in a browser. State (the tsnet node key, the GUI token, and job records) lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or `-state`. Do not commit that directory. System mode does not create a tailnet node key; `-hostname` only names that state directory. The name other nodes see is the one tailscaled already has.
 
-The agent listens on the tailnet at `:8644` and on localhost at `127.0.0.1:8645`. The local listener refuses any address that is not `127.0.0.1`, `localhost`, or `::1` (`0.0.0.0:8645` and `:8645` will not start). Do not publish port 8645.
+System mode listens only on the node's Tailscale IPv4 and IPv6 addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) on `-port` (8644). It never binds `0.0.0.0`. If those addresses change, or tailscaled restarts, the agent drops the old sockets and binds the new ones. Outgoing calls to other agents are normal OS dials of `100.x` / `fd7a::`, not a userspace stack. The host firewall must allow inbound TCP 8644 on the Tailscale interface (`tailscale0` on Linux). tsnet mode listens inside the process, so the host firewall does not see that port.
 
-Every tailnet request is checked with tsnet `LocalClient.WhoIs`. Until the agent knows its own tailnet user it refuses tailnet calls. After that, only that user is allowed, unless you set `-owner` or `TAILFILE_OWNER` to a different login. A node whose tailnet user is `tagged-devices`, or whose own peer is tagged, has no human owner. The process exits with an error unless `-owner` or `TAILFILE_OWNER` is set.
+On Linux the LocalAPI socket is often root-only. If system mode (or auto, in the fallback log) says it cannot read tailscaled, run `sudo tailscale set --operator=$USER` and start the agent again as that user. On macOS, auto and system try both the open-source `tailscaled` unix socket and the App Store / standalone app. Those GUI builds publish a LocalAPI port via a `sameuserproof` file (`IPNExtension` for the App Store, `macsys` for the standalone app) instead of only a socket. The stock `tailscale.com/client/local` dialer finds that port; this agent does not set `UseSocketOnly`, so both are tried, GUI first when it is present.
+
+The agent also listens on localhost at `127.0.0.1:8645` in every mode. The local listener refuses any address that is not `127.0.0.1`, `localhost`, or `::1` (`0.0.0.0:8645` and `:8645` will not start). Do not publish port 8645. The GUI bearer token, origin check, and host check are unchanged.
+
+Every tailnet request is checked with LocalAPI `WhoIs`, whether that LocalAPI belongs to the system tailscaled or to the embedded tsnet node. Until the agent knows its own tailnet user it refuses tailnet calls. After that, only that user is allowed, unless you set `-owner` or `TAILFILE_OWNER` to a different login. In system mode the default owner is the user logged into the local tailscaled. A node whose tailnet user is `tagged-devices`, or whose own peer is tagged, has no human owner. The process exits with an error unless `-owner` or `TAILFILE_OWNER` is set.
 
 Tailscale grants can narrow (and share) access. If WhoIs `CapMap` contains `iori.dev/cap/tailfile`, that grant is enforced and the same-user check is not required. Each value is JSON:
 
@@ -156,21 +172,21 @@ Wails v3 can accept a drop **onto** the window (`EnableFileDrop`, elements with 
 
 ## sing-box (TUN) and Tailscale
 
-tsnet does not install a kernel route. Its data plane for `100.64.0.0/10` and `fd7a:115c:a1e0::/48` stays inside the process (gVisor). A TUN stack such as sing-box never sees those packets from the agent. What the host does see is the control connection (HTTPS to Tailscale) and DERP (UDP). If the agent process is captured by the TUN, those are the flows that break, and the node looks offline.
+**System mode** uses the kernel (or the tailscaled userspace) route that already exists. Packets to `100.64.0.0/10` and `fd7a:115c:a1e0::/48` are visible to a TUN stack such as sing-box. Those prefixes must be **direct**, or the agent cannot reach its peers and peers cannot reach port 8644. You do not need a process-direct rule for the agent itself unless the TUN also captures its LocalAPI socket or the GUI's localhost calls.
 
-Put the agent, and the GUI if it is a separate process, in sing-box **direct**. Also send the Tailscale prefixes direct, because the system `tailscaled` and `tailscale ping` use them on the host:
+**tsnet mode** does not install a kernel route. Its data plane for those prefixes stays inside the process (gVisor). sing-box never sees those packets from the agent. What the host does see is the control connection (HTTPS to Tailscale) and DERP (UDP). If the agent process is captured by the TUN, those are the flows that break, and the node looks offline. Put `tailfile-agent` in sing-box **direct**, and still send the Tailscale prefixes direct so the system `tailscaled` and `tailscale ping` keep working:
 
 - `100.64.0.0/10`
 - `fd7a:115c:a1e0::/48`
-- process direct for `tailfile-agent`, `tailfile-wails`, and `tailfile-mygo`
+- process direct for `tailfile-agent` when `-net tsnet` (and for the GUIs if localhost is being captured)
 
-Check from the system tailscale, which is a different node from the tsnet agent:
+Check from the system tailscale:
 
 ```sh
 tailscale ping my-laptop
 ```
 
-Use the `-hostname` you gave the agent. A pong means the system tailnet can reach that tsnet node. `via DERP` on every ping means the direct path is not up; the copy can still work, it will just hairpin through DERP. `tailscale ping` does not by itself prove the agent's own userspace stack is bypassing the TUN. If ping works and the agent still cannot stay logged in, the process rule is the one that is missing.
+In tsnet mode that hostname is the `-hostname` you gave the agent, and it is a different node from the system tailscaled. In system mode, ping the machine's existing MagicDNS name; the agent is not its own node. A pong means the system tailnet can reach that name. `via DERP` on every ping means the direct path is not up; the copy can still work, it will just hairpin through DERP. `tailscale ping` does not by itself prove a tsnet agent's userspace stack is bypassing the TUN. If ping works and a tsnet agent still cannot stay logged in, the process rule is the one that is missing.
 
 ## Tests
 
@@ -179,7 +195,7 @@ cd agent && go test -count=1 -race .
 cd gui-mygo && go test -count=1 .
 ```
 
-The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. They use an in-process loopback harness, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. System-tailscaled mode is covered by `TestNetAutoSelectsSystem`, `TestNetAutoFallsBackToTsnet`, `TestNetSystemRequiresRunningTailscaled`, `TestNetSystemPermissionError`, `TestSystemWhoIsAuth`, `TestTailListenAddrsRejectsNonTailscale`, `TestSystemRebindOnIPChange`, `TestSystemNodeListFromStatus`, and `TestProbeSystemTailscaledReturns`. They use an in-process loopback harness or a fake LocalAPI, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
 
 Both GUIs show a preview when you select a file. Each has a persisted Preview on / Preview off control (default on). Wails stores it in `localStorage` under `tailfile.preview`. MyGo stores `0` or `1` in `UserConfigDir/tailfile/mygo-preview` (mode `0600`). Image and PDF bytes are fetched with the bearer token. An `<img src>` or a PDF.js URL would not send `Authorization`.
 
@@ -187,4 +203,4 @@ MyGo's test builds the window with `ui.NewTester` and clicks Copy and Paste. It 
 
 ## What this VM did not do
 
-The GUI was not clicked through on Windows, macOS, or Hyprland. Wails server mode was exercised in Chrome against `tailfile-agent -demo` (tree, text, image, PDF canvas, push, pull, read-only paste, mkdir, rename, import, cache). The Linux Wails desktop process and the MyGo process both stayed up under Xvfb; their widgets were not clicked. There is no `TS_AUTHKEY` here, so a real tailnet join was not run. Details and binary sizes are in `COMPARISON.md`.
+The GUI was not clicked through on Windows, macOS, or Hyprland. Wails server mode was exercised in Chrome against `tailfile-agent -demo` (tree, text, image, PDF canvas, push, pull, read-only paste, mkdir, rename, import, cache). The Linux Wails desktop process and the MyGo process both stayed up under Xvfb; their widgets were not clicked. There is no `TS_AUTHKEY` and no local tailscaled here, so neither a real tsnet join nor system mode against a live tailnet was run. Details and binary sizes are in `COMPARISON.md`.
