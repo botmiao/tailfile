@@ -45,7 +45,7 @@ button.seg-on {
 
 button:disabled { opacity: 0.5; cursor: default; }
 
-input[type="text"] {
+input[type="text"], input[type="password"] {
   border: 1px solid #c4c4c4;
   border-radius: 4px;
   padding: 4px 8px;
@@ -267,6 +267,44 @@ input[type="text"] {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.tf-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(20, 20, 20, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 20;
+  padding: 16px;
+}
+
+.tf-dialog {
+  width: min(440px, 100%);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.18);
+}
+
+.tf-dialog h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.tf-dialog label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.tf-check {
+  margin-top: 2px;
 }
 
 .tf-empty {

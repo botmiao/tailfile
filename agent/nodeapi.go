@@ -23,7 +23,10 @@ type NodeAPI interface {
 	Open(ctx context.Context, path string, start, end int64) (io.ReadCloser, int64, error)
 	Mkdir(ctx context.Context, path string) error
 	Rename(ctx context.Context, from, to string) error
-	StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error)
+	// StartUpload begins or resumes a partial. overwrite must be false unless
+	// the user has already chosen to replace an existing file. A matching
+	// partial (same size and mtime) resumes without overwrite.
+	StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error)
 	PutChunk(ctx context.Context, id string, offset int64, data []byte, sumHex string) (int64, error)
 	FinishUpload(ctx context.Context, id string, sha256hex string) error
 	AbortUpload(ctx context.Context, id string) error
@@ -31,6 +34,7 @@ type NodeAPI interface {
 	GetJob(ctx context.Context, id string) (Job, error)
 	CancelJob(ctx context.Context, id string) error
 	ResumeJob(ctx context.Context, id string) (Job, error)
+	AnswerConflict(ctx context.Context, id, action string, applyToRest bool) (Job, error)
 	Health(ctx context.Context) error
 }
 
@@ -81,11 +85,11 @@ func (d directAPI) Rename(ctx context.Context, from, to string) error {
 	return d.s.rename(d.s.rootsFor(ctx), from, to)
 }
 
-func (d directAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error) {
+func (d directAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error) {
 	if err := ctx.Err(); err != nil {
 		return Upload{}, err
 	}
-	return d.s.uploads.Start(d.s.rootsFor(ctx), path, size, mtimeUnix, resumeID)
+	return d.s.uploads.Start(d.s.rootsFor(ctx), path, size, mtimeUnix, resumeID, overwrite)
 }
 
 func (d directAPI) PutChunk(ctx context.Context, id string, offset int64, data []byte, sumHex string) (int64, error) {
@@ -146,6 +150,13 @@ func (d directAPI) ResumeJob(ctx context.Context, id string) (Job, error) {
 		return Job{}, err
 	}
 	return d.s.jobs.resume(id)
+}
+
+func (d directAPI) AnswerConflict(ctx context.Context, id, action string, applyToRest bool) (Job, error) {
+	if err := ctx.Err(); err != nil {
+		return Job{}, err
+	}
+	return d.s.jobs.answer(id, action, applyToRest)
 }
 
 func (d directAPI) Health(context.Context) error { return nil }
@@ -222,10 +233,10 @@ func (h *httpAPI) Rename(ctx context.Context, from, to string) error {
 	return h.do(ctx, http.MethodPost, "/v1/fs/rename", map[string]string{"from": from, "to": to}, nil, nil)
 }
 
-func (h *httpAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error) {
+func (h *httpAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error) {
 	var out Upload
 	err := h.do(ctx, http.MethodPost, "/v1/uploads", map[string]any{
-		"path": path, "size": size, "mtimeUnix": mtimeUnix, "resumeId": resumeID,
+		"path": path, "size": size, "mtimeUnix": mtimeUnix, "resumeId": resumeID, "overwrite": overwrite,
 	}, nil, &out)
 	return out, err
 }
@@ -299,6 +310,14 @@ func (h *httpAPI) CancelJob(ctx context.Context, id string) error {
 func (h *httpAPI) ResumeJob(ctx context.Context, id string) (Job, error) {
 	var out Job
 	err := h.do(ctx, http.MethodPost, "/v1/jobs/"+url.PathEscape(id)+"/resume", nil, nil, &out)
+	return out, err
+}
+
+func (h *httpAPI) AnswerConflict(ctx context.Context, id, action string, applyToRest bool) (Job, error) {
+	var out Job
+	err := h.do(ctx, http.MethodPost, "/v1/jobs/"+url.PathEscape(id)+"/conflict", map[string]any{
+		"action": action, "applyToRest": applyToRest,
+	}, nil, &out)
 	return out, err
 }
 

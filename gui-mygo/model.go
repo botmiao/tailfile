@@ -70,8 +70,21 @@ type app struct {
 	transfers []agent.Transfer
 	imports   []agent.Job
 	seenJob   map[string]string
-	alive     bool
-	stopPoll  chan struct{}
+
+	settingsOpen   bool
+	netMode        string
+	authConfigured bool
+	authKeyInput   string
+	settingsNote   string
+
+	conflictOpen  bool
+	conflictApply bool
+	conflictPath  string
+	conflictKind  string
+	conflictID    string
+	conflictHold  string
+	alive         bool
+	stopPoll      chan struct{}
 
 	sideW float32
 	listH float32
@@ -509,6 +522,131 @@ func fileURL(path string) string {
 		slash = "/" + slash
 	}
 	return (&url.URL{Scheme: "file", Path: slash}).String()
+}
+
+func (a *app) noteConflicts() {
+	path, kind, id := "", "", ""
+	for _, tr := range a.transfers {
+		if tr.Job.Status == "conflict" && tr.Job.Conflict != nil && tr.Job.Conflict.Path != "" {
+			path, kind, id = tr.Job.Conflict.Path, "transfer", tr.ID
+			break
+		}
+	}
+	if path == "" {
+		for _, job := range a.imports {
+			if job.Status == "conflict" && job.Conflict != nil && job.Conflict.Path != "" {
+				path, kind, id = job.Conflict.Path, "job", job.ID
+				break
+			}
+		}
+	}
+	key := ""
+	if id != "" && path != "" {
+		key = kind + "\x00" + id + "\x00" + path
+	}
+	if key != "" && key == a.conflictHold {
+		a.conflictPath = ""
+		return
+	}
+	if a.conflictHold != "" && key != a.conflictHold {
+		a.conflictHold = ""
+	}
+	a.conflictPath, a.conflictKind, a.conflictID = path, kind, id
+	if path != "" {
+		a.conflictOpen = true
+	}
+}
+
+func (a *app) answerConflict(action string) {
+	if a.conflictHold != "" || a.conflictID == "" || a.conflictPath == "" {
+		return
+	}
+	kind, id, apply := a.conflictKind, a.conflictID, a.conflictApply
+	hold := kind + "\x00" + id + "\x00" + a.conflictPath
+	a.conflictHold = hold
+	a.conflictApply = false
+	a.conflictOpen = false
+	a.conflictPath = ""
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		var err error
+		if kind == "job" {
+			_, err = a.client.AnswerJobConflict(ctx, id, action, apply)
+		} else {
+			_, err = a.client.AnswerTransferConflict(ctx, id, action, apply)
+		}
+		a.onMain(func() {
+			if err != nil {
+				a.err = err.Error()
+				if a.conflictHold == hold {
+					a.conflictHold = ""
+				}
+			}
+		})
+		a.pollOnce()
+	}()
+}
+
+func (a *app) openSettings() {
+	a.settingsOpen = true
+	a.authKeyInput = ""
+	a.settingsNote = ""
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		st, err := a.client.Settings(ctx)
+		a.onMain(func() {
+			if err != nil {
+				a.settingsNote = err.Error()
+				return
+			}
+			a.netMode = st.Net
+			if st.NetRequested != "" && st.NetRequested != st.Net {
+				a.netMode = st.Net + " (" + st.NetRequested + ")"
+			}
+			a.authConfigured = st.AuthKeyConfigured
+		})
+	}()
+}
+
+func (a *app) saveAuthKey() {
+	key := strings.TrimSpace(a.authKeyInput)
+	if key == "" {
+		a.settingsNote = "Paste an auth key first"
+		return
+	}
+	a.authKeyInput = ""
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		st, err := a.client.SetAuthKey(ctx, key)
+		a.onMain(func() {
+			if err != nil {
+				a.err = err.Error()
+				return
+			}
+			a.authConfigured = st.Configured
+			a.settingsNote = "Saved. Restart the agent before tsnet uses this key. TS_AUTHKEY still wins if it is set."
+		})
+	}()
+}
+
+func (a *app) clearAuthKey() {
+	a.authKeyInput = ""
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		st, err := a.client.ClearAuthKey(ctx)
+		a.onMain(func() {
+			if err != nil {
+				a.err = err.Error()
+				return
+			}
+			a.authConfigured = st.Configured
+			a.settingsNote = "Cleared. Restart the agent to drop the stored key."
+		})
+	}()
 }
 
 func (a *app) pollOnce() {

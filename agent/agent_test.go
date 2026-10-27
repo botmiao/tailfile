@@ -106,7 +106,7 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 	payload := bytes.Repeat([]byte("xyz"), 1500) // 4500 bytes, chunks of 1024
 	c := &httpAPI{base: ts.URL, http: http.DefaultClient, token: testGUIToken}
 	ctx := context.Background()
-	up, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, "")
+	up, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestResumableWriteAndBadHash(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	again, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, up.ID)
+	again, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, up.ID, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestWriteRequiresWriteRoot(t *testing.T) {
 	_, ts, dir := newLocal(t, false)
 	defer ts.Close()
 	c := &httpAPI{base: ts.URL, http: http.DefaultClient, token: testGUIToken}
-	_, err := c.StartUpload(context.Background(), filepath.Join(dir, "nope.txt"), 3, 0, "")
+	_, err := c.StartUpload(context.Background(), filepath.Join(dir, "nope.txt"), 3, 0, "", false)
 	if err == nil || !strings.Contains(err.Error(), "write") {
 		t.Fatalf("expected read-only error, got %v", err)
 	}
@@ -469,6 +469,10 @@ func waitTransfer(t *testing.T, c *Client, id string, want ...string) Transfer {
 				if tr.Job.Status == status {
 					return tr
 				}
+			}
+			switch tr.Job.Status {
+			case jobError, jobCanceled, jobCompleted, jobConflict:
+				t.Fatalf("transfer %s stuck at %s (%s), want %v", id, tr.Job.Status, tr.Job.Error, want)
 			}
 		}
 		time.Sleep(15 * time.Millisecond)

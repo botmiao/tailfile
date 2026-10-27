@@ -36,6 +36,7 @@ func (s *Server) fileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/jobs/{id}", s.handleJobGet)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", s.handleJobCancel)
 	mux.HandleFunc("POST /v1/jobs/{id}/resume", s.handleJobResume)
+	mux.HandleFunc("POST /v1/jobs/{id}/conflict", s.handleJobConflict)
 }
 
 func (s *Server) localRoutes(mux *http.ServeMux) {
@@ -45,10 +46,14 @@ func (s *Server) localRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/transfers", s.handleTransferList)
 	mux.HandleFunc("POST /v1/transfers/{id}/cancel", s.handleTransferCancel)
 	mux.HandleFunc("POST /v1/transfers/{id}/resume", s.handleTransferResume)
+	mux.HandleFunc("POST /v1/transfers/{id}/conflict", s.handleTransferConflict)
 	mux.HandleFunc("POST /v1/local/drop-target", s.handleDropTarget)
 	mux.HandleFunc("POST /v1/local/import", s.handleImport)
 	mux.HandleFunc("POST /v1/local/cache", s.handleCache)
 	mux.HandleFunc("POST /v1/local/reveal", s.handleReveal)
+	mux.HandleFunc("GET /v1/local/settings", s.handleSettings)
+	mux.HandleFunc("PUT /v1/local/settings/authkey", s.handleAuthKeyPut)
+	mux.HandleFunc("DELETE /v1/local/settings/authkey", s.handleAuthKeyDelete)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -275,12 +280,13 @@ func (s *Server) handleUploadStart(w http.ResponseWriter, r *http.Request) {
 		Size      int64  `json:"size"`
 		ResumeID  string `json:"resumeId"`
 		MtimeUnix int64  `json:"mtimeUnix"`
+		Overwrite bool   `json:"overwrite"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, statusErr(400, "bad json"))
 		return
 	}
-	up, err := s.uploads.Start(s.rootsFor(r.Context()), body.Path, body.Size, body.MtimeUnix, body.ResumeID)
+	up, err := s.uploads.Start(s.rootsFor(r.Context()), body.Path, body.Size, body.MtimeUnix, body.ResumeID, body.Overwrite)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -389,6 +395,23 @@ func (s *Server) handleJobCancel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleJobResume(w http.ResponseWriter, r *http.Request) {
 	job, err := s.jobs.resume(r.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Server) handleJobConflict(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action      string `json:"action"`
+		ApplyToRest bool   `json:"applyToRest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, statusErr(400, "bad json"))
+		return
+	}
+	job, err := s.jobs.answer(r.PathValue("id"), body.Action, body.ApplyToRest)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -511,6 +534,23 @@ func (s *Server) handleTransferResume(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tr)
 }
 
+func (s *Server) handleTransferConflict(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Action      string `json:"action"`
+		ApplyToRest bool   `json:"applyToRest"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, statusErr(400, "bad json"))
+		return
+	}
+	tr, err := s.answerTransferConflict(r.Context(), r.PathValue("id"), body.Action, body.ApplyToRest)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, tr)
+}
+
 func (s *Server) startTransfer(ctx context.Context, req TransferRequest) (Transfer, error) {
 	if s.resolver == nil {
 		return Transfer{}, statusErr(500, "node directory is not configured")
@@ -599,6 +639,26 @@ func (s *Server) transferAct(ctx context.Context, id string, cancel bool) (Trans
 		if _, err := api.ResumeJob(ctx, rec.RemoteID); err != nil {
 			return Transfer{}, err
 		}
+	}
+	return s.transferView(ctx, rec)
+}
+
+func (s *Server) answerTransferConflict(ctx context.Context, id, action string, applyToRest bool) (Transfer, error) {
+	s.trackMu.Lock()
+	rec, ok := s.tracks[id]
+	s.trackMu.Unlock()
+	if !ok {
+		return Transfer{}, statusErr(404, "transfer not found")
+	}
+	if s.resolver == nil {
+		return Transfer{}, statusErr(500, "node directory is not configured")
+	}
+	api, err := s.resolver.API(ctx, rec.Runner)
+	if err != nil {
+		return Transfer{}, err
+	}
+	if _, err := api.AnswerConflict(ctx, rec.RemoteID, action, applyToRest); err != nil {
+		return Transfer{}, err
 	}
 	return s.transferView(ctx, rec)
 }

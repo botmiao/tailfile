@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -29,6 +30,7 @@ func runTailnet(ctx context.Context, cfg Config) error {
 		return err
 	}
 	log.Printf("tailfile: network mode %s (%s)", choice.Mode, choice.Why)
+	srv.noteNet(cfg.Net, choice.Mode)
 
 	var backend tailBackend
 	switch choice.Mode {
@@ -155,18 +157,24 @@ type tsnetBackend struct {
 }
 
 func startTsnet(cfg Config) (*tsnetBackend, error) {
+	key, source := resolveAuthKey(cfg)
 	ts := &tsnet.Server{
 		Hostname:  cfg.Hostname,
 		Dir:       cfg.StateDir,
-		AuthKey:   cfg.AuthKey,
+		AuthKey:   key,
 		Ephemeral: cfg.Ephemeral,
 		UserLogf:  log.Printf,
 	}
-	// AuthKey and TS_AUTHKEY are read by tsnet. They are never logged here.
-	if cfg.AuthKey == "" {
-		log.Printf("tailfile: no TS_AUTHKEY — tsnet will print an interactive login URL on first run")
-	} else {
-		log.Printf("tailfile: using auth key from the environment or -authkey (value not logged)")
+	// The key is handed to tsnet and never written to the log.
+	switch source {
+	case "":
+		log.Printf("tailfile: no auth key (TS_AUTHKEY, -authkey, or %s) — tsnet will print an interactive login URL on first run", filepath.Join(cfg.StateDir, AuthKeyFile))
+	case "TS_AUTHKEY":
+		log.Printf("tailfile: using auth key from TS_AUTHKEY (value not logged)")
+	case "-authkey":
+		log.Printf("tailfile: using auth key from -authkey (value not logged)")
+	default:
+		log.Printf("tailfile: using auth key from %s (value not logged)", filepath.Join(cfg.StateDir, AuthKeyFile))
 	}
 	ln, err := ts.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
 	if err != nil {

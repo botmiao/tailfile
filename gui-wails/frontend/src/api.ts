@@ -18,6 +18,12 @@ export type NodeInfo = {
   readRoots?: string[];
 };
 
+export type FileConflict = {
+  rel: string;
+  path: string;
+  size?: number;
+};
+
 export type Job = {
   id: string;
   mode: string;
@@ -29,6 +35,18 @@ export type Job = {
   current?: string;
   destPath: string;
   error?: string;
+  conflict?: FileConflict;
+};
+
+export type Settings = {
+  net: string;
+  netRequested?: string;
+  authKeyConfigured: boolean;
+};
+
+export type AuthKeyStatus = {
+  configured: boolean;
+  restartRequired: boolean;
 };
 
 export type Transfer = {
@@ -173,6 +191,32 @@ export function cancelTransfer(base: string, id: string) {
 
 export function resumeTransfer(base: string, id: string) {
   return call<Transfer>(base, "POST", `/v1/transfers/${encodeURIComponent(id)}/resume`);
+}
+
+export function answerTransferConflict(base: string, id: string, action: "overwrite" | "skip", applyToRest: boolean) {
+  return call<Transfer>(base, "POST", `/v1/transfers/${encodeURIComponent(id)}/conflict`, {
+    action,
+    applyToRest,
+  });
+}
+
+export function answerJobConflict(base: string, id: string, action: "overwrite" | "skip", applyToRest: boolean) {
+  return call<Job>(base, "POST", `/v1/jobs/${encodeURIComponent(id)}/conflict`, {
+    action,
+    applyToRest,
+  });
+}
+
+export function settings(base: string) {
+  return call<Settings>(base, "GET", "/v1/local/settings");
+}
+
+export function setAuthKey(base: string, authKey: string) {
+  return call<AuthKeyStatus>(base, "PUT", "/v1/local/settings/authkey", { authKey });
+}
+
+export function clearAuthKey(base: string) {
+  return call<AuthKeyStatus>(base, "DELETE", "/v1/local/settings/authkey");
 }
 
 export function jobs(base: string) {

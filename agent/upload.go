@@ -62,7 +62,13 @@ func partialPaths(dest string) (data, meta string) {
 // mtimeUnix is the source modification time in Unix nanoseconds. A later Start
 // with a different non-zero mtime, or a different size, drops the partial and
 // starts over. resumeID reattaches a known session when it still matches.
-func (u *Uploads) Start(roots Roots, path string, size int64, mtimeUnix int64, resumeID string) (Upload, error) {
+//
+// A completed file at path is left untouched unless overwrite is true. A
+// partial whose meta size and mtime match this source is resumed either way,
+// including when the completed file is still there from an earlier overwrite
+// that had not finished. Bytes always land in the partial. Finish is what
+// renames that partial onto path, and only after the whole-file hash matches.
+func (u *Uploads) Start(roots Roots, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error) {
 	if size < 0 {
 		return Upload{}, statusErr(400, "size must be >= 0")
 	}
@@ -70,11 +76,14 @@ func (u *Uploads) Start(roots Roots, path string, size int64, mtimeUnix int64, r
 	if err != nil {
 		return Upload{}, err
 	}
-	if _, err := os.Stat(dest); err == nil {
-		return Upload{}, statusErr(409, "%s", errExists.Error())
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return Upload{}, err
+	st, statErr := os.Stat(dest)
+	switch {
+	case statErr == nil && st.IsDir():
+		return Upload{}, statusErr(409, "destination is a directory")
+	case statErr != nil && !errors.Is(statErr, os.ErrNotExist):
+		return Upload{}, statErr
 	}
+	destExists := statErr == nil
 	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 		return Upload{}, err
 	}
@@ -107,7 +116,11 @@ func (u *Uploads) Start(roots Roots, path string, size int64, mtimeUnix int64, r
 			return up.snapshot(), nil
 		}
 	}
-	// Stale partial (different size or source mtime): drop it.
+	if destExists && !overwrite {
+		return Upload{}, statusErr(409, "%s", errExists.Error())
+	}
+	// Stale partial (different size or source mtime): drop it. The completed
+	// destination, if any, stays until Finish renames over it.
 	u.discardPath(dest, dataPath, metaPath)
 
 	id := resumeID
@@ -276,7 +289,9 @@ func (u *Uploads) Finish(id string, sha256hex string) (Upload, error) {
 		return Upload{}, err
 	}
 	up.closed = true
-	if err := os.Rename(up.data, up.meta.Path); err != nil {
+	// The destination is replaced only after the hash check above. A mismatch
+	// has already deleted the partial and returned.
+	if err := replaceFile(up.data, up.meta.Path); err != nil {
 		return Upload{}, err
 	}
 	os.Remove(up.metaP)

@@ -42,6 +42,13 @@ export function App() {
   const [pdfData, setPdfData] = useState<Uint8Array | null>(null);
   const [transfers, setTransfers] = useState<api.Transfer[]>([]);
   const [imports, setImports] = useState<api.Job[]>([]);
+  const [applyRest, setApplyRest] = useState(false);
+  const [conflictHold, setConflictHold] = useState("");
+  const conflictHoldRef = useRef("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<api.Settings | null>(null);
+  const [authKey, setAuthKey] = useState("");
+  const [settingsNote, setSettingsNote] = useState("");
   const [dragNote, setDragNote] = useState("");
   const [dragPath, setDragPath] = useState("");
   const treeRef = useRef<HTMLDivElement>(null);
@@ -335,6 +342,93 @@ export function App() {
     }
   }
 
+  const rawConflict = (() => {
+    for (const tr of transfers) {
+      if (tr.job.status === "conflict" && tr.job.conflict?.path) {
+        const path = tr.job.conflict.path;
+        return { kind: "transfer" as const, id: tr.id, path, key: `transfer:${tr.id}:${path}` };
+      }
+    }
+    for (const job of imports) {
+      if (job.status === "conflict" && job.conflict?.path) {
+        const path = job.conflict.path;
+        return { kind: "job" as const, id: job.id, path, key: `job:${job.id}:${path}` };
+      }
+    }
+    return null;
+  })();
+  const pendingConflict = rawConflict && rawConflict.key !== conflictHold ? rawConflict : null;
+
+  useEffect(() => {
+    if (conflictHoldRef.current && rawConflict?.key !== conflictHoldRef.current) {
+      conflictHoldRef.current = "";
+      setConflictHold("");
+    }
+  }, [rawConflict?.key, conflictHold]);
+
+  async function answerConflict(action: "overwrite" | "skip") {
+    if (!pendingConflict || conflictHoldRef.current) return;
+    conflictHoldRef.current = pendingConflict.key;
+    setConflictHold(pendingConflict.key);
+    try {
+      if (pendingConflict.kind === "transfer") {
+        await api.answerTransferConflict(base, pendingConflict.id, action, applyRest);
+      } else {
+        await api.answerJobConflict(base, pendingConflict.id, action, applyRest);
+      }
+      setApplyRest(false);
+      setError("");
+    } catch (e) {
+      conflictHoldRef.current = "";
+      setConflictHold("");
+      fail(e);
+    }
+  }
+
+  async function openSettings() {
+    setSettingsOpen(true);
+    setAuthKey("");
+    setSettingsNote("");
+    try {
+      setSettings(await api.settings(base));
+      setError("");
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  async function saveAuthKey() {
+    if (!authKey.trim()) {
+      setSettingsNote("Paste an auth key first");
+      return;
+    }
+    try {
+      const res = await api.setAuthKey(base, authKey.trim());
+      setAuthKey("");
+      setSettings(await api.settings(base));
+      setSettingsNote(
+        res.restartRequired
+          ? "Saved. Restart the agent before tsnet uses this key. TS_AUTHKEY still wins if it is set."
+          : "Saved.",
+      );
+      setError("");
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  async function clearAuthKey() {
+    try {
+      const res = await api.clearAuthKey(base);
+      setAuthKey("");
+      setSettings(await api.settings(base));
+      setSettingsNote(res.restartRequired ? "Cleared. Restart the agent to drop the stored key." : "Cleared.");
+      setError("");
+    } catch (e) {
+      fail(e);
+    }
+  }
+
   async function cacheSelected() {
     if (!folder || !file || file.isDir) {
       setStatus("Select a file to cache for dragging out");
@@ -400,6 +494,7 @@ export function App() {
             Connect
           </button>
           <button onClick={() => void refresh()}>Refresh</button>
+          <button onClick={() => void openSettings()}>Settings</button>
           <span className="tf-status">{status}</span>
         </div>
         <div className="tf-row">
@@ -607,8 +702,65 @@ export function App() {
           <div key={job.id}>import {api.jobLine(job)}</div>
         ))}
       </footer>
+      {pendingConflict && (
+        <div className="tf-modal" role="dialog" aria-labelledby="tf-conflict-title">
+          <div className="tf-dialog">
+            <h2 id="tf-conflict-title">目标已有同名文件</h2>
+            <p className="tf-path">{pendingConflict.path}</p>
+            <label>
+              <input
+                className="tf-check"
+                type="checkbox"
+                checked={applyRest}
+                onChange={(e) => setApplyRest(e.target.checked)}
+              />
+              <span>对后续冲突都这样处理</span>
+            </label>
+            <div className="tf-row">
+              <button onClick={() => void answerConflict("overwrite")}>覆盖</button>
+              <button onClick={() => void answerConflict("skip")}>跳过</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {settingsOpen && (
+        <div className="tf-modal" role="dialog" aria-labelledby="tf-settings-title">
+          <div className="tf-dialog">
+            <h2 id="tf-settings-title">Settings</h2>
+            <p>
+              Net mode: <strong>{settings ? netLabel(settings) : "…"}</strong>
+            </p>
+            <p className="tf-muted">
+              Auth key: {settings?.authKeyConfigured ? "configured" : "not configured"}. The agent never sends it back.
+            </p>
+            <input
+              type="password"
+              aria-label="Tailscale auth key"
+              placeholder="tskey-auth-…"
+              autoComplete="off"
+              value={authKey}
+              onChange={(e) => setAuthKey(e.target.value)}
+            />
+            <div className="tf-row">
+              <button onClick={() => void saveAuthKey()}>Save key</button>
+              <button onClick={() => void clearAuthKey()}>Clear</button>
+              <button onClick={() => setSettingsOpen(false)}>Close</button>
+            </div>
+            {settingsNote && <p className="tf-muted">{settingsNote}</p>}
+            <p className="tf-muted">
+              Stored as ts-authkey in the agent state directory, mode 0600. Restart the agent to use it. If TS_AUTHKEY is
+              set in the environment, that value wins.
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function netLabel(s: api.Settings): string {
+  if (s.netRequested && s.netRequested !== s.net) return `${s.net} (${s.netRequested})`;
+  return s.net || "unknown";
 }
 
 function flatten(nodes: api.NodeInfo[], expanded: Set<string>, cache: Record<string, api.Entry[]>): TreeRow[] {

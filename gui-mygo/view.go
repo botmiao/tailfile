@@ -17,6 +17,7 @@ func (a *app) view(c *ui.Context) {
 		a.refresh()
 	}
 	a.followTree()
+	a.noteConflicts()
 	if a.previewOn {
 		if e, ok := a.selectedEntry(); ok {
 			a.loadPreview(e)
@@ -29,6 +30,8 @@ func (a *app) view(c *ui.Context) {
 		ui.Split(c, &a.sideW, func() { a.treePane(c) }, func() { a.rightPane(c) }).Grow(1)
 		a.transferBar(c)
 	})
+	a.conflictDialog(c)
+	a.settingsDialog(c)
 }
 
 func (a *app) toolbar(c *ui.Context) {
@@ -41,6 +44,9 @@ func (a *app) toolbar(c *ui.Context) {
 			if ui.Button(c, "Refresh").Clicked() {
 				a.bindClient()
 				a.refresh()
+			}
+			if ui.Button(c, "Settings").Clicked() {
+				a.openSettings()
 			}
 			ui.Text(c, a.status).FontSize(12).TextColor(t.TextMuted).Shrink(1)
 		})
@@ -316,5 +322,63 @@ func (a *app) transferBar(c *ui.Context) {
 		for _, job := range a.imports {
 			ui.Text(c, "import  "+jobLine(job)).FontSize(12)
 		}
+	})
+}
+
+func (a *app) conflictDialog(c *ui.Context) {
+	if a.conflictPath == "" {
+		return
+	}
+	ui.Modal(c, &a.conflictOpen, func() {
+		ui.Column(c).Gap(8).Padding(12).Children(func() {
+			ui.Text(c, "目标已有同名文件").Bold()
+			ui.Text(c, a.conflictPath).FontSize(12).Wrap()
+			ui.Checkbox(c, &a.conflictApply, "对后续冲突都这样处理")
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c, "覆盖").Clicked() {
+					a.answerConflict("overwrite")
+				}
+				if ui.Button(c, "跳过").Clicked() {
+					a.answerConflict("skip")
+				}
+			})
+		})
+	})
+}
+
+func (a *app) settingsDialog(c *ui.Context) {
+	if !a.settingsOpen {
+		return
+	}
+	ui.Modal(c, &a.settingsOpen, func() {
+		ui.Column(c).Gap(8).Padding(12).Children(func() {
+			ui.Text(c, "Settings").Bold()
+			mode := a.netMode
+			if mode == "" {
+				mode = "…"
+			}
+			ui.Text(c, "Net mode: "+mode)
+			state := "not configured"
+			if a.authConfigured {
+				state = "configured"
+			}
+			ui.Text(c, "Auth key: "+state+". The agent never sends it back.").FontSize(12).Wrap()
+			ui.TextInput(c, &a.authKeyInput).Placeholder("tskey-auth-…")
+			ui.Row(c).Gap(8).Children(func() {
+				if ui.Button(c, "Save key").Clicked() {
+					a.saveAuthKey()
+				}
+				if ui.Button(c, "Clear").Clicked() {
+					a.clearAuthKey()
+				}
+				if ui.Button(c, "Close").Clicked() {
+					a.settingsOpen = false
+				}
+			})
+			if a.settingsNote != "" {
+				ui.Text(c, a.settingsNote).FontSize(12).Wrap()
+			}
+			ui.Text(c, "Stored as ts-authkey in the agent state directory. Restart the agent to use it. TS_AUTHKEY wins if set.").FontSize(12).Wrap()
+		})
 	})
 }

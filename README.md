@@ -85,7 +85,17 @@ export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the c
   -write "$HOME/Tailfile"
 ```
 
-`-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` so the key stays out of shell history. An empty key makes tsnet print an interactive login URL; open it in a browser. State (the tsnet node key, the GUI token, and job records) lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or `-state`. Do not commit that directory. System mode does not create a tailnet node key; `-hostname` only names that state directory. The name other nodes see is the one tailscaled already has.
+`-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` or the Settings screen so the key stays out of shell history and out of the service command. At process start the order is `TS_AUTHKEY`, then `-authkey`, then the file `<state>/ts-authkey`. An empty key makes tsnet print an interactive login URL; open it in a browser. Saving or clearing the key does not restart a node that is already up; restart the agent. The local API returns only whether a key is configured. It never returns the key, and the key is never logged.
+
+State lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or wherever `-state` points. Do not commit that directory.
+
+| OS | State directory |
+| --- | --- |
+| Linux | `~/.config/tailfile/<hostname>/` |
+| macOS | `~/Library/Application Support/tailfile/<hostname>/` |
+| Windows | `%AppData%\tailfile\<hostname>\` |
+
+`<hostname>` defaults to `tailfile-` plus the machine's hostname. `gui-token` is rewritten at every start (mode `0600`; on Windows the DACL grants the current user only). `ts-authkey` is the stored auth key, with the same permissions, and is left in place across restarts. `jobs.json`, `transfers.json`, and `service.json` are also mode `0600`. System mode does not create a tailnet node key; `-hostname` only names that state directory. The name other nodes see is the one tailscaled already has.
 
 System mode listens only on the node's Tailscale IPv4 and IPv6 addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) on `-port` (8644). It never binds `0.0.0.0`. If those addresses change, or tailscaled restarts, the agent drops the old sockets and binds the new ones. Outgoing calls to other agents are normal OS dials of `100.x` / `fd7a::`, not a userspace stack. The host firewall must allow inbound TCP 8644 on the Tailscale interface (`tailscale0` on Linux). tsnet mode listens inside the process, so the host firewall does not see that port.
 
@@ -105,11 +115,55 @@ A grant path is intersected with this node's `-read` and `-write` lists. A path 
 
 The localhost API is the only place that can import, cache, or reveal a path. It does not use WhoIs. It requires a bearer token generated at each agent start (32 random bytes, hex), written mode `0600` to `<state dir>/gui-token`. The log line names that path and does not print the token. Both GUIs read the same file (or `-token-file` / `-state`). Wails injects it into `index.html` as `window.TAILFILE_TOKEN` and marks the page `no-store`, because the browser cannot read the file itself. MyGo sends `Origin: mygo://tailfile`. Requests must present `Authorization: Bearer …`. `Host` must be loopback, which blocks a DNS-rebinding name that points at 127.0.0.1. `Access-Control-Allow-Origin: *` is not set. A browser `Origin` is reflected only when it is the Wails server (`http://127.0.0.1:17431`, `localhost`, or `[::1]`, port 17431), a `wails://` desktop page, `http://wails.localhost`, or `mygo://tailfile`. An empty `Origin` is allowed together with the bearer (MyGo, curl, tests). Preflight `OPTIONS` does not require the bearer. Putting the token in the loopback Wails page does not stop another OS user who can already connect to `127.0.0.1:17431`; the `0600` file stops other users from reading the token off disk.
 
+Settings are local-only. `GET /v1/local/settings` returns the resolved net mode (`system`, `tsnet`, or `demo`), the `-net` value that was requested, and `authKeyConfigured`. `PUT /v1/local/settings/authkey` with `{"authKey":"..."}` writes `<state>/ts-authkey`. `DELETE /v1/local/settings/authkey` removes it. Both write responses set `restartRequired` and do not echo the key. The tailnet listener does not serve these routes.
+
 `/v1/local/import` only accepts OS paths inside the read roots, including after symlink resolution. A path outside those roots is rejected. In demo mode the read roots are the fixture directories, so an import of `/tmp/...` fails. On a real agent, pass `-read` for every directory you want to import from.
 
-Copy is a job on one of the two nodes. **Push** means the source reads its disk and writes the destination. **Pull** means the destination reads the source and writes its disk. Chunks are 1 MiB, each with its own SHA-256. The partial (`*.tailfile-partial`) and its meta (`*.tailfile-meta`, mode `0600`) record the source size, the source mtime, and, at finish, the whole-file SHA-256. Finish deletes the partial if that hash does not match. If a later resume sees a different source size or mtime, that file starts over. A file that already finished is not overwritten; a source that changes after a successful copy fails with "already exists". Job and transfer records are `jobs.json` and `transfers.json` (mode `0600`) in the state directory, so Resume still works after the agent process restarts. A job that was running at shutdown comes back as `interrupted`. Delete is not implemented.
+Copy is a job on one of the two nodes. **Push** means the source reads its disk and writes the destination. **Pull** means the destination reads the source and writes its disk. Chunks are 1 MiB, each with its own SHA-256. The partial (`*.tailfile-partial`) and its meta (`*.tailfile-meta`, mode `0600`) record the source size, the source mtime, and, at finish, the whole-file SHA-256. Finish deletes the partial if that hash does not match. If a later resume sees a different source size or mtime, that file starts over.
+
+When the destination path already exists and is a file, the job pauses with status `conflict`. Both GUIs ask 覆盖 (overwrite) or 跳过 (skip). The checkbox 对后续冲突都这样处理 stores that choice as the policy for later files in the same job. A file is never replaced without an explicit choice. Overwrite writes the new bytes to the partial and renames that partial onto the destination only after the whole-file SHA-256 matches. A bad hash deletes the partial and leaves the old file. A partial whose meta still matches this source's size and mtime resumes with no prompt, including an overwrite that was interrupted while the old destination was still in place. A destination that is a directory is an error, not a prompt. The pending conflict, the per-file choices, and the apply-to-rest policy are stored in `jobs.json`, so they survive a restart. Answer with `POST /v1/transfers/{id}/conflict` (a push or pull the GUI started) or `POST /v1/jobs/{id}/conflict` (a local import job):
+
+```json
+{"action": "overwrite", "applyToRest": false}
+```
+
+`action` is `overwrite` or `skip`. Job and transfer records are `jobs.json` and `transfers.json` (mode `0600`) in the state directory, so Resume still works after the agent process restarts. A job that was running at shutdown comes back as `interrupted`. A job that was waiting on a conflict stays `conflict`; Resume on that job is refused until the dialog is answered. Delete is not implemented.
 
 The node does not escalate. It cannot sudo, and it does not show a UAC prompt. It only sees the files the user who launched it can see.
+
+## Per-user service
+
+```sh
+tailfile-agent service install|uninstall|start|stop|status [flags]
+```
+
+This installs a service for the current user only. It does not ask for root or an administrator. `--system` is rejected. A machine-wide unit is left for a later, separate installer (see the TODO on `ErrUserServiceOnly` in `agent/service.go`). That path must not reuse the per-user unit, plist, or logon task. To change which account owns the service, uninstall, then install again while logged in as the other user. Installing while a service is already present also fails, so changing `-net`, `-read`, `-write`, or `-hostname` is the same two steps.
+
+The flags you pass are written into the service command and into `<state>/service.json` (`scope` is `"user"`, mode `0600`). That file has no secrets. If you omit them, install also records the resolved `-hostname`, `-state`, `-net`, and the default `-read` (`~/Tailfile`, mode `0700`) so a later change of the machine hostname does not point the service at a new state directory. `-authkey` is stored in `ts-authkey` and omitted from the unit, the plist, the task, and `service.json`. A service process does not inherit `TS_AUTHKEY` from the shell that ran `install`. Set that variable in the service environment yourself if it should win over the file.
+
+Install registers the service and does not start the process in this session. `service start` does. On Linux and Windows that registration also starts the agent at the next logon of this user. On macOS, logon start begins only after `service start` has loaded the plist.
+
+### Linux
+
+User unit `~/.config/systemd/user/tailfile-agent.service`. Install runs `systemctl --user enable` and a daemon-reload. The unit is wanted by `default.target` and restarts on failure. It is not a system unit and it does not read `/etc/sysconfig`. It starts at the next login of this user. To keep the user manager, and therefore the agent, running with nobody logged in:
+
+```sh
+loginctl enable-linger "$USER"
+```
+
+### macOS
+
+LaunchAgent `~/Library/LaunchAgents/tailfile-agent.plist`, with `RunAtLoad`. There is no LaunchDaemon and no `sudo`. Install only writes the plist. `service start` runs `launchctl load`, which starts the agent now and again at later logins. `service stop` unloads the plist, so it stays unloaded until the next `service start`.
+
+### Windows
+
+`kardianos/service` on Windows installs through the Service Control Manager, which needs an administrator. Its `UserService` option is documented for POSIX only, so this build does not call that library on Windows. It registers a Task Scheduler logon task named `TailfileAgent` (`schtasks /Create /XML`) for the user who runs install: `RunLevel` LeastPrivilege, an interactive logon trigger, and no execution time limit. An `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value would also avoid elevation, but it cannot start, stop, or report status. The task can, via `schtasks /Run`, `/End`, and `/Query`. The task runs when that user logs on. It is not a Windows service and it does not show a UAC prompt.
+
+```sh
+./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
+./tailfile-agent service status
+./tailfile-agent service start
+```
 
 ## Build per OS
 
@@ -195,11 +249,13 @@ cd agent && go test -count=1 -race .
 cd gui-mygo && go test -count=1 .
 ```
 
-The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. System-tailscaled mode is covered by `TestNetAutoSelectsSystem`, `TestNetAutoFallsBackToTsnet`, `TestNetSystemRequiresRunningTailscaled`, `TestNetSystemPermissionError`, `TestSystemWhoIsAuth`, `TestTailListenAddrsRejectsNonTailscale`, `TestSystemRebindOnIPChange`, `TestSystemNodeListFromStatus`, and `TestProbeSystemTailscaledReturns`. They use an in-process loopback harness or a fake LocalAPI, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. System-tailscaled mode is covered by `TestNetAutoSelectsSystem`, `TestNetAutoFallsBackToTsnet`, `TestNetSystemRequiresRunningTailscaled`, `TestNetSystemPermissionError`, `TestSystemWhoIsAuth`, `TestTailListenAddrsRejectsNonTailscale`, `TestSystemRebindOnIPChange`, `TestSystemNodeListFromStatus`, and `TestProbeSystemTailscaledReturns`. A same-name destination is covered by `TestExistingFilePromptsAndOverwriteIsAtomic`, `TestExistingFileSkipLeavesIt`, `TestConflictApplyToRestSkipsTheNextFile`, `TestPartialSameSourceResumesWithoutPrompt`, `TestOverwriteRenamesOnlyAfterHash`, `TestConflictSurvivesRestart`, and `TestAnswerWithoutChoiceDoesNotOverwrite`. The auth-key file is covered by `TestAuthKeyAPIStoresAndDoesNotEcho` and `TestAuthKeyRejectsEmptyAndMultiline`. The per-user service plan is covered by `TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem`, `TestStableServiceArgsAndConfig`, `TestWindowsLogonTaskDoesNotElevate`, `TestServicePlanStoresAuthKeyOutsideTheUnit`, and `TestUserSystemdUnitIsPerUser`. Those tests check the unit text and the task XML. They do not call `systemctl`, `launchctl`, or `schtasks`. All of the above use an in-process loopback harness or a fake LocalAPI, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+
+A manual pass for system mode, the on-disk token and auth key, `~/Tailfile`, service install, the conflict dialog, and the Settings screen is in `docs/TESTING.md`.
 
 Both GUIs show a preview when you select a file. Each has a persisted Preview on / Preview off control (default on). Wails stores it in `localStorage` under `tailfile.preview`. MyGo stores `0` or `1` in `UserConfigDir/tailfile/mygo-preview` (mode `0600`). Image and PDF bytes are fetched with the bearer token. An `<img src>` or a PDF.js URL would not send `Authorization`.
 
-MyGo's test builds the window with `ui.NewTester` and clicks Copy and Paste. It does not open a display.
+MyGo's test builds the window with `ui.NewTester` and clicks Copy and Paste. `TestConflictAndSettingsDialogs` checks the conflict dialog (覆盖, 跳过, 对后续冲突都这样处理) and a settings view that shows the net mode. It does not open a display.
 
 ## What this VM did not do
 

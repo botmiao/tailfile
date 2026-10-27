@@ -95,9 +95,9 @@ func (c *Config) applyDefaults() error {
 	if c.ChunkSize == 0 {
 		c.ChunkSize = defaultChunkSize
 	}
-	if c.AuthKey == "" {
-		c.AuthKey = os.Getenv("TS_AUTHKEY")
-	}
+	// TS_AUTHKEY is not copied onto Config. resolveAuthKey reads it at tsnet
+	// start so the environment wins over -authkey and over the ts-authkey file,
+	// and so the key is not kept on the config struct just to be logged later.
 	if c.Owner == "" {
 		c.Owner = os.Getenv("TAILFILE_OWNER")
 	}

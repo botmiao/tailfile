@@ -75,11 +75,14 @@ func writeSecret(path string, data []byte) error {
 		os.Remove(tmp)
 		return cerr
 	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
+	if err := tightenSecret(tmp); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return tightenSecret(path)
 }
 
 func bearerOK(header, want string) bool {
@@ -163,7 +166,7 @@ func setLocalCORS(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		w.Header().Set("Vary", "Origin")
 	}
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, HEAD, OPTIONS")
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Range, Upload-Offset, X-Chunk-SHA256")
 	w.Header().Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type")
 }
