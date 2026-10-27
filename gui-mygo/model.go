@@ -82,6 +82,7 @@ type app struct {
 	conflictPath  string
 	conflictKind  string
 	conflictID    string
+	conflictHold  string
 	alive         bool
 	stopPoll      chan struct{}
 
@@ -539,6 +540,17 @@ func (a *app) noteConflicts() {
 			}
 		}
 	}
+	key := ""
+	if id != "" && path != "" {
+		key = kind + "\x00" + id + "\x00" + path
+	}
+	if key != "" && key == a.conflictHold {
+		a.conflictPath = ""
+		return
+	}
+	if a.conflictHold != "" && key != a.conflictHold {
+		a.conflictHold = ""
+	}
 	a.conflictPath, a.conflictKind, a.conflictID = path, kind, id
 	if path != "" {
 		a.conflictOpen = true
@@ -546,9 +558,15 @@ func (a *app) noteConflicts() {
 }
 
 func (a *app) answerConflict(action string) {
+	if a.conflictHold != "" || a.conflictID == "" || a.conflictPath == "" {
+		return
+	}
 	kind, id, apply := a.conflictKind, a.conflictID, a.conflictApply
+	hold := kind + "\x00" + id + "\x00" + a.conflictPath
+	a.conflictHold = hold
 	a.conflictApply = false
 	a.conflictOpen = false
+	a.conflictPath = ""
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -561,6 +579,9 @@ func (a *app) answerConflict(action string) {
 		a.onMain(func() {
 			if err != nil {
 				a.err = err.Error()
+				if a.conflictHold == hold {
+					a.conflictHold = ""
+				}
 			}
 		})
 		a.pollOnce()

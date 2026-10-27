@@ -43,6 +43,8 @@ export function App() {
   const [transfers, setTransfers] = useState<api.Transfer[]>([]);
   const [imports, setImports] = useState<api.Job[]>([]);
   const [applyRest, setApplyRest] = useState(false);
+  const [conflictHold, setConflictHold] = useState("");
+  const conflictHoldRef = useRef("");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<api.Settings | null>(null);
   const [authKey, setAuthKey] = useState("");
@@ -340,22 +342,34 @@ export function App() {
     }
   }
 
-  const pendingConflict = (() => {
+  const rawConflict = (() => {
     for (const tr of transfers) {
       if (tr.job.status === "conflict" && tr.job.conflict?.path) {
-        return { kind: "transfer" as const, id: tr.id, path: tr.job.conflict.path };
+        const path = tr.job.conflict.path;
+        return { kind: "transfer" as const, id: tr.id, path, key: `transfer:${tr.id}:${path}` };
       }
     }
     for (const job of imports) {
       if (job.status === "conflict" && job.conflict?.path) {
-        return { kind: "job" as const, id: job.id, path: job.conflict.path };
+        const path = job.conflict.path;
+        return { kind: "job" as const, id: job.id, path, key: `job:${job.id}:${path}` };
       }
     }
     return null;
   })();
+  const pendingConflict = rawConflict && rawConflict.key !== conflictHold ? rawConflict : null;
+
+  useEffect(() => {
+    if (conflictHoldRef.current && rawConflict?.key !== conflictHoldRef.current) {
+      conflictHoldRef.current = "";
+      setConflictHold("");
+    }
+  }, [rawConflict?.key, conflictHold]);
 
   async function answerConflict(action: "overwrite" | "skip") {
-    if (!pendingConflict) return;
+    if (!pendingConflict || conflictHoldRef.current) return;
+    conflictHoldRef.current = pendingConflict.key;
+    setConflictHold(pendingConflict.key);
     try {
       if (pendingConflict.kind === "transfer") {
         await api.answerTransferConflict(base, pendingConflict.id, action, applyRest);
@@ -365,6 +379,8 @@ export function App() {
       setApplyRest(false);
       setError("");
     } catch (e) {
+      conflictHoldRef.current = "";
+      setConflictHold("");
       fail(e);
     }
   }
