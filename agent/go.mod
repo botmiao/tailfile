@@ -2,7 +2,11 @@ module tailfile.local/agent
 
 go 1.27.3
 
-require tailscale.com v1.104.2
+require (
+	github.com/kardianos/service v1.2.2
+	golang.org/x/sys v0.48.0
+	tailscale.com v1.104.2
+)
 
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
@@ -41,7 +45,6 @@ require (
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
-	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/time v0.16.0 // indirect

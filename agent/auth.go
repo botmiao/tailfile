@@ -75,11 +75,14 @@ func writeSecret(path string, data []byte) error {
 		os.Remove(tmp)
 		return cerr
 	}
-	if err := os.Chmod(tmp, 0o600); err != nil {
+	if err := tightenSecret(tmp); err != nil {
 		os.Remove(tmp)
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	return tightenSecret(path)
 }
 
 func bearerOK(header, want string) bool {
