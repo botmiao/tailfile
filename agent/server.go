@@ -36,8 +36,9 @@ type Server struct {
 	allowPeerHeader bool
 	peers           map[string]Identity
 
-	mu    sync.Mutex
-	owner string
+	mu           sync.Mutex
+	owner        string
+	netRequested string
 
 	// guiToken is the per-start bearer for the localhost listener.
 	// It is never logged. An empty token fails closed.

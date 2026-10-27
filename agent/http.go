@@ -51,6 +51,9 @@ func (s *Server) localRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/local/import", s.handleImport)
 	mux.HandleFunc("POST /v1/local/cache", s.handleCache)
 	mux.HandleFunc("POST /v1/local/reveal", s.handleReveal)
+	mux.HandleFunc("GET /v1/local/settings", s.handleSettings)
+	mux.HandleFunc("PUT /v1/local/settings/authkey", s.handleAuthKeyPut)
+	mux.HandleFunc("DELETE /v1/local/settings/authkey", s.handleAuthKeyDelete)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {

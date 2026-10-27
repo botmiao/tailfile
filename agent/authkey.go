@@ -1,12 +1,28 @@
 package agent
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 )
+
+// Settings is the local GUI's view of this agent. It never includes an auth key.
+type Settings struct {
+	Net               string `json:"net"`
+	NetRequested      string `json:"netRequested,omitempty"`
+	AuthKeyConfigured bool   `json:"authKeyConfigured"`
+}
+
+// AuthKeyStatus is the only response a key write or delete returns.
+type AuthKeyStatus struct {
+	Configured      bool `json:"configured"`
+	RestartRequired bool `json:"restartRequired"`
+}
 
 // AuthKeyFile is the tsnet auth key inside the state directory.
 // Mode 0600 (and, on Windows, a DACL for the current user only).
@@ -83,4 +99,66 @@ func resolveAuthKey(cfg Config) (key, source string) {
 		return "", ""
 	}
 	return k, "file"
+}
+
+func (s *Server) noteNet(requested, resolved string) {
+	s.mu.Lock()
+	s.netRequested = requested
+	if resolved != "" {
+		s.mode = resolved
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) currentSettings() Settings {
+	s.mu.Lock()
+	mode := s.mode
+	requested := s.netRequested
+	dir := s.stateDir
+	s.mu.Unlock()
+	if mode == "" {
+		mode = "unknown"
+	}
+	return Settings{
+		Net:               mode,
+		NetRequested:      requested,
+		AuthKeyConfigured: authKeyConfigured(dir),
+	}
+}
+
+func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.currentSettings())
+}
+
+func (s *Server) handleAuthKeyPut(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		AuthKey string `json:"authKey"`
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxAuthKeyBytes+128))
+	if err := dec.Decode(&body); err != nil {
+		writeErr(w, statusErr(400, "bad json"))
+		return
+	}
+	if s.stateDir == "" {
+		writeErr(w, statusErr(500, "no state directory"))
+		return
+	}
+	if err := storeAuthKey(s.stateDir, body.AuthKey); err != nil {
+		// storeAuthKey's errors name the problem and never the key.
+		writeErr(w, statusErr(400, "%s", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, AuthKeyStatus{Configured: true, RestartRequired: true})
+}
+
+func (s *Server) handleAuthKeyDelete(w http.ResponseWriter, r *http.Request) {
+	if s.stateDir == "" {
+		writeErr(w, statusErr(500, "no state directory"))
+		return
+	}
+	if err := deleteAuthKey(s.stateDir); err != nil {
+		writeErr(w, statusErr(400, "%s", err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, AuthKeyStatus{Configured: false, RestartRequired: true})
 }

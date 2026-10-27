@@ -197,6 +197,24 @@ func (c *Client) Reveal(ctx context.Context, path string) error {
 	return c.do(ctx, http.MethodPost, "/v1/local/reveal", map[string]string{"path": path}, nil)
 }
 
+func (c *Client) Settings(ctx context.Context) (Settings, error) {
+	var out Settings
+	err := c.do(ctx, http.MethodGet, "/v1/local/settings", nil, &out)
+	return out, err
+}
+
+func (c *Client) SetAuthKey(ctx context.Context, key string) (AuthKeyStatus, error) {
+	var out AuthKeyStatus
+	err := c.do(ctx, http.MethodPut, "/v1/local/settings/authkey", map[string]string{"authKey": key}, &out)
+	return out, err
+}
+
+func (c *Client) ClearAuthKey(ctx context.Context) (AuthKeyStatus, error) {
+	var out AuthKeyStatus
+	err := c.do(ctx, http.MethodDelete, "/v1/local/settings/authkey", nil, &out)
+	return out, err
+}
+
 func (c *Client) authorize(req *http.Request) {
 	if c.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.Token)

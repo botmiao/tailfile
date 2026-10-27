@@ -46,7 +46,7 @@ func runDemo(ctx context.Context, cfg Config) error {
 		return err
 	}
 	defer lb.Close()
-	lb.Orch.mode = "demo"
+	lb.Orch.noteNet(cfg.Net, "demo")
 	cacheDir, err := DefaultCacheDir()
 	if err != nil {
 		return err

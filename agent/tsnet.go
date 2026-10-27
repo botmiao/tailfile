@@ -30,6 +30,7 @@ func runTailnet(ctx context.Context, cfg Config) error {
 		return err
 	}
 	log.Printf("tailfile: network mode %s (%s)", choice.Mode, choice.Why)
+	srv.noteNet(cfg.Net, choice.Mode)
 
 	var backend tailBackend
 	switch choice.Mode {
