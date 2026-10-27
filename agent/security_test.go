@@ -429,6 +429,10 @@ func TestJobListSurvivesRestart(t *testing.T) {
 	if _, err := s3.jobs.resume(job.ID); err != nil {
 		t.Fatal(err)
 	}
+	waitJob(t, s3, job.ID, jobError)
+	// The status is visible before the last jobs.json write. Wait until that
+	// goroutine has finished so TempDir cleanup does not race with it.
+	waitNotExecuting(t, s3, job.ID)
 }
 
 func TestCacheKeySeparatesSameNames(t *testing.T) {
