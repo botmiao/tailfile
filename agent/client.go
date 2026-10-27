@@ -148,6 +148,25 @@ func (c *Client) ResumeTransfer(ctx context.Context, id string) (Transfer, error
 	return out, err
 }
 
+// AnswerTransferConflict chooses overwrite or skip for a paused transfer.
+// applyToRest stores that choice for every later conflict in the same job.
+func (c *Client) AnswerTransferConflict(ctx context.Context, id, action string, applyToRest bool) (Transfer, error) {
+	var out Transfer
+	err := c.do(ctx, http.MethodPost, "/v1/transfers/"+url.PathEscape(id)+"/conflict", map[string]any{
+		"action": action, "applyToRest": applyToRest,
+	}, &out)
+	return out, err
+}
+
+// AnswerJobConflict answers a job directly. Imports are jobs, not transfers.
+func (c *Client) AnswerJobConflict(ctx context.Context, id, action string, applyToRest bool) (Job, error) {
+	var out Job
+	err := c.do(ctx, http.MethodPost, "/v1/jobs/"+url.PathEscape(id)+"/conflict", map[string]any{
+		"action": action, "applyToRest": applyToRest,
+	}, &out)
+	return out, err
+}
+
 func (c *Client) Jobs(ctx context.Context) ([]Job, error) {
 	var out struct {
 		Jobs []Job `json:"jobs"`

@@ -268,13 +268,13 @@ func TestGrantNarrowsRoots(t *testing.T) {
 	}
 
 	up, err := (&httpAPI{base: ts.URL, http: &http.Client{Transport: grantRT{peer: "bob"}}}).StartUpload(
-		context.Background(), filepath.Join(sub, "new.txt"), 1, 0, "",
+		context.Background(), filepath.Join(sub, "new.txt"), 1, 0, "", false,
 	)
 	if err != nil || up.ID == "" {
 		t.Fatalf("granted write: %+v %v", up, err)
 	}
 	_, err = (&httpAPI{base: ts.URL, http: &http.Client{Transport: grantRT{peer: "bob"}}}).StartUpload(
-		context.Background(), filepath.Join(sib, "new.txt"), 1, 0, "",
+		context.Background(), filepath.Join(sib, "new.txt"), 1, 0, "", false,
 	)
 	if err == nil {
 		t.Fatal("write outside the grant should fail")
@@ -288,7 +288,7 @@ func TestFinishRejectsBadSHA256(t *testing.T) {
 	payload := []byte("abcdef")
 	c := &httpAPI{base: ts.URL, http: http.DefaultClient, token: testGUIToken}
 	ctx := context.Background()
-	up, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, "")
+	up, err := c.StartUpload(ctx, dest, int64(len(payload)), 0, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestFinishRejectsBadSHA256(t *testing.T) {
 	if _, err := os.Stat(dest + ".tailfile-partial"); !os.IsNotExist(err) {
 		t.Fatalf("partial left behind: %v", err)
 	}
-	up, err = c.StartUpload(ctx, dest, int64(len(payload)), 0, "")
+	up, err = c.StartUpload(ctx, dest, int64(len(payload)), 0, "", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +526,7 @@ func waitJob(t *testing.T, s *Server, id, want string) Job {
 		if job.Status == want {
 			return job
 		}
-		if job.Status == jobError || job.Status == jobCanceled || job.Status == jobCompleted {
+		if job.Status == jobError || job.Status == jobCanceled || job.Status == jobCompleted || job.Status == jobConflict {
 			if job.Status != want {
 				break
 			}

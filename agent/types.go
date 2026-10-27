@@ -95,8 +95,23 @@ type Job struct {
 	ReadRoots     []string      `json:"readRoots,omitempty"`
 	WriteRoots    []string      `json:"writeRoots,omitempty"`
 	Error         string        `json:"error,omitempty"`
-	Created       time.Time     `json:"created"`
-	Updated       time.Time     `json:"updated"`
+	Conflict      *FileConflict `json:"conflict,omitempty"`
+	// ConflictPolicy is overwrite or skip for every later conflict in this job.
+	// It is set only when the user checks "apply to the rest".
+	ConflictPolicy string `json:"conflictPolicy,omitempty"`
+	// ConflictChoices records a decision per relative path so a restart can
+	// continue a conflict the user already answered.
+	ConflictChoices map[string]string `json:"conflictChoices,omitempty"`
+	Created         time.Time         `json:"created"`
+	Updated         time.Time         `json:"updated"`
+}
+
+// FileConflict is one existing destination file the job will not touch
+// until the user picks overwrite or skip.
+type FileConflict struct {
+	Rel  string `json:"rel"`
+	Path string `json:"path"`
+	Size int64  `json:"size,omitempty"`
 }
 
 // SourceStamp is the source file identity stored with a job and in the
@@ -114,6 +129,12 @@ const (
 	jobCanceled    = "canceled"
 	jobError       = "error"
 	jobInterrupted = "interrupted"
+	jobConflict    = "conflict"
+)
+
+const (
+	conflictOverwrite = "overwrite"
+	conflictSkip      = "skip"
 )
 
 // JobRequest starts a copy on the node that receives it.

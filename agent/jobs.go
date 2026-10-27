@@ -35,11 +35,13 @@ type Jobs struct {
 }
 
 type runningJob struct {
-	mu       sync.Mutex
-	job      Job
-	cancel   context.CancelFunc
-	done     map[string]struct{}
-	baseDone int64
+	mu        sync.Mutex
+	job       Job
+	cancel    context.CancelFunc
+	done      map[string]struct{}
+	baseDone  int64
+	executing bool
+	wake      chan struct{}
 }
 
 type copyItem struct {
@@ -98,6 +100,16 @@ func (r *runningJob) snapshot() Job {
 	}
 	if len(r.job.WriteRoots) > 0 {
 		cp.WriteRoots = append([]string(nil), r.job.WriteRoots...)
+	}
+	if r.job.Conflict != nil {
+		c := *r.job.Conflict
+		cp.Conflict = &c
+	}
+	if len(r.job.ConflictChoices) > 0 {
+		cp.ConflictChoices = make(map[string]string, len(r.job.ConflictChoices))
+		for k, v := range r.job.ConflictChoices {
+			cp.ConflictChoices[k] = v
+		}
 	}
 	return cp
 }
@@ -170,8 +182,9 @@ func (j *Jobs) launch(ctx context.Context, req JobRequest, preset []copyItem) (J
 			WriteRoots: append([]string(nil), roots.Write...),
 			Created:    now, Updated: now,
 		},
-		cancel: cancel,
-		done:   map[string]struct{}{},
+		cancel:    cancel,
+		done:      map[string]struct{}{},
+		executing: true,
 	}
 	j.mu.Lock()
 	j.all[id] = run
@@ -186,15 +199,25 @@ func (j *Jobs) cancel(id string) (Job, error) {
 	if run == nil {
 		return Job{}, statusErr(404, "job not found")
 	}
-	if run.cancel != nil {
-		run.cancel()
+	run.mu.Lock()
+	if run.job.Status == jobRunning || run.job.Status == jobQueued || run.job.Status == jobConflict {
+		run.job.Status = jobCanceled
+		run.job.Error = "canceled"
+		run.job.Conflict = nil
+		run.job.Updated = time.Now().UTC()
 	}
-	run.update(func(job *Job) {
-		if job.Status == jobRunning || job.Status == jobQueued {
-			job.Status = jobCanceled
-			job.Error = "canceled"
+	cancel := run.cancel
+	wake := run.wake
+	run.mu.Unlock()
+	if wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
 		}
-	})
+	}
+	if cancel != nil {
+		cancel()
+	}
 	j.save()
 	return run.snapshot(), nil
 }
@@ -204,21 +227,27 @@ func (j *Jobs) resume(id string) (Job, error) {
 	if run == nil {
 		return Job{}, statusErr(404, "job not found")
 	}
-	snap := run.snapshot()
-	switch snap.Status {
-	case jobRunning, jobQueued:
+	run.mu.Lock()
+	if run.executing || run.job.Status == jobRunning || run.job.Status == jobQueued {
+		run.mu.Unlock()
 		return Job{}, statusErr(409, "job is still running")
-	case jobCompleted:
-		return snap, nil
+	}
+	if run.job.Status == jobConflict {
+		run.mu.Unlock()
+		return Job{}, statusErr(409, "job is waiting for overwrite or skip")
+	}
+	if run.job.Status == jobCompleted {
+		run.mu.Unlock()
+		return run.snapshot(), nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run.mu.Lock()
 	if run.job.UseRoots {
 		ctx = withRoots(ctx, Roots{Read: run.job.ReadRoots, Write: run.job.WriteRoots})
 	} else {
 		ctx = withRoots(ctx, j.s.roots)
 	}
 	run.cancel = cancel
+	run.executing = true
 	run.job.Status = jobRunning
 	run.job.Error = ""
 	run.job.Updated = time.Now().UTC()
@@ -232,7 +261,76 @@ func (j *Jobs) resume(id string) (Job, error) {
 	return run.snapshot(), nil
 }
 
+// answer records overwrite or skip for the file the job is paused on.
+// applyToRest stores that choice as the policy for later files in the job.
+// A job that was reloaded after a restart has no goroutine; answering it
+// starts the copy again, and the saved choice skips a second prompt.
+func (j *Jobs) answer(id, action string, applyToRest bool) (Job, error) {
+	switch action {
+	case conflictOverwrite, conflictSkip:
+	default:
+		return Job{}, statusErr(400, "action must be overwrite or skip")
+	}
+	run := j.getRun(id)
+	if run == nil {
+		return Job{}, statusErr(404, "job not found")
+	}
+	run.mu.Lock()
+	if run.job.Status != jobConflict || run.job.Conflict == nil {
+		run.mu.Unlock()
+		return Job{}, statusErr(409, "job is not waiting on a conflict")
+	}
+	rel := run.job.Conflict.Rel
+	if run.job.ConflictChoices == nil {
+		run.job.ConflictChoices = map[string]string{}
+	}
+	run.job.ConflictChoices[rel] = action
+	if applyToRest {
+		run.job.ConflictPolicy = action
+	}
+	run.job.Conflict = nil
+	run.job.Status = jobRunning
+	run.job.Error = ""
+	run.job.Updated = time.Now().UTC()
+	wake := run.wake
+	start := !run.executing
+	var ctx context.Context
+	if start {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(context.Background())
+		if run.job.UseRoots {
+			ctx = withRoots(ctx, Roots{Read: run.job.ReadRoots, Write: run.job.WriteRoots})
+		} else {
+			ctx = withRoots(ctx, j.s.roots)
+		}
+		run.cancel = cancel
+		run.executing = true
+		run.done = map[string]struct{}{}
+		for _, p := range run.job.DonePaths {
+			run.done[p] = struct{}{}
+		}
+	}
+	run.mu.Unlock()
+	j.save()
+	if wake != nil {
+		select {
+		case wake <- struct{}{}:
+		default:
+		}
+	}
+	if start {
+		go j.execute(ctx, run, nil)
+	}
+	return run.snapshot(), nil
+}
+
 func (j *Jobs) execute(ctx context.Context, run *runningJob, preset []copyItem) {
+	defer func() {
+		run.mu.Lock()
+		run.executing = false
+		run.cancel = nil
+		run.mu.Unlock()
+	}()
 	err := j.copyAll(ctx, run, preset)
 	if err == nil {
 		err = ctx.Err()
@@ -322,11 +420,21 @@ func (j *Jobs) copyAll(ctx context.Context, run *runningJob, preset []copyItem) 
 			}
 			continue
 		}
-		up, err := dest.StartUpload(ctx, it.Dest, it.Size, it.MtimeUnix, "")
+		upPtr, err := j.beginUpload(ctx, run, dest, it, j.knownChoice(run, it.Rel))
 		if err != nil {
 			return err
 		}
-		run.update(func(job *Job) { job.CurrentUpload = up.ID })
+		if upPtr == nil {
+			j.markHandled(run, it, items)
+			j.save()
+			continue
+		}
+		up := *upPtr
+		run.update(func(job *Job) {
+			job.CurrentUpload = up.ID
+			job.Status = jobRunning
+			job.Conflict = nil
+		})
 		var reader io.ReadCloser
 		if snap.Mode == "pull" {
 			reader, _, err = src.Open(ctx, it.Remote, up.Offset, -1)
@@ -759,6 +867,119 @@ func (j *Jobs) save() {
 	}
 }
 
+func (j *Jobs) knownChoice(run *runningJob, rel string) string {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if c, ok := run.job.ConflictChoices[rel]; ok && (c == conflictOverwrite || c == conflictSkip) {
+		return c
+	}
+	if p := run.job.ConflictPolicy; p == conflictOverwrite || p == conflictSkip {
+		return p
+	}
+	return ""
+}
+
+// beginUpload starts the partial for it. A nil upload and a nil error means
+// the user skipped an existing file. Overwrite writes the partial beside the
+// destination; Finish is what replaces it.
+func (j *Jobs) beginUpload(ctx context.Context, run *runningJob, dest NodeAPI, it copyItem, choice string) (*Upload, error) {
+	up, err := dest.StartUpload(ctx, it.Dest, it.Size, it.MtimeUnix, "", choice == conflictOverwrite)
+	if err == nil {
+		return &up, nil
+	}
+	if !isDestExists(err) {
+		return nil, err
+	}
+	if choice == conflictSkip {
+		return nil, nil
+	}
+	if choice == conflictOverwrite {
+		return nil, err
+	}
+	choice, err = j.waitConflict(ctx, run, it)
+	if err != nil {
+		return nil, err
+	}
+	if choice == conflictSkip {
+		return nil, nil
+	}
+	up, err = dest.StartUpload(ctx, it.Dest, it.Size, it.MtimeUnix, "", true)
+	if err != nil {
+		return nil, err
+	}
+	return &up, nil
+}
+
+func (j *Jobs) waitConflict(ctx context.Context, run *runningJob, it copyItem) (string, error) {
+	run.mu.Lock()
+	if c, ok := run.job.ConflictChoices[it.Rel]; ok && (c == conflictOverwrite || c == conflictSkip) {
+		run.mu.Unlock()
+		return c, nil
+	}
+	if p := run.job.ConflictPolicy; p == conflictOverwrite || p == conflictSkip {
+		run.mu.Unlock()
+		return p, nil
+	}
+	run.job.Status = jobConflict
+	run.job.Conflict = &FileConflict{Rel: it.Rel, Path: it.Dest, Size: it.Size}
+	run.job.Current = it.Dest
+	run.job.Error = ""
+	if run.wake == nil {
+		run.wake = make(chan struct{}, 1)
+	}
+	wake := run.wake
+	run.mu.Unlock()
+	j.save()
+
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case <-wake:
+	}
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if run.job.Status == jobCanceled || ctx.Err() != nil {
+		return "", context.Canceled
+	}
+	if c, ok := run.job.ConflictChoices[it.Rel]; ok && (c == conflictOverwrite || c == conflictSkip) {
+		return c, nil
+	}
+	if p := run.job.ConflictPolicy; p == conflictOverwrite || p == conflictSkip {
+		return p, nil
+	}
+	return "", errors.New("conflict closed without a choice")
+}
+
+func (j *Jobs) markHandled(run *runningJob, it copyItem, items []copyItem) {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if _, ok := run.done[it.Rel]; !ok {
+		run.done[it.Rel] = struct{}{}
+		run.job.DonePaths = append(run.job.DonePaths, it.Rel)
+		run.baseDone += it.Size
+	}
+	run.job.FilesDone = countFilesDone(run.done, items)
+	run.job.BytesDone = run.baseDone
+	run.job.CurrentUpload = ""
+	run.job.Current = it.Dest
+	if run.job.Status == jobConflict {
+		run.job.Status = jobRunning
+	}
+	run.job.Conflict = nil
+	run.job.Updated = time.Now().UTC()
+}
+
+func isDestExists(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errExists) {
+		return true
+	}
+	var se *StatusError
+	return errors.As(err, &se) && se.Code == 409 && strings.Contains(se.Msg, errExists.Error())
+}
+
 func (j *Jobs) load() error {
 	if j.statePath == "" {
 		return nil
@@ -788,6 +1009,7 @@ func (j *Jobs) load() error {
 				job.Error = "agent restarted"
 			}
 		}
+		// jobConflict stays conflict so the GUI can ask again after a restart.
 		j.all[job.ID] = &runningJob{job: job, done: map[string]struct{}{}}
 		for _, p := range job.DonePaths {
 			j.all[job.ID].done[p] = struct{}{}
