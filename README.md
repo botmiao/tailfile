@@ -25,11 +25,23 @@ gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
 
 ## 不用 tailnet 先试一下
 
+下面的命令都假定从仓库根目录开始。Linux / macOS：
+
 ```sh
 cd agent
 go build -o tailfile-agent ./cmd/tailfile-agent
 ./tailfile-agent -demo
 ```
+
+Windows（PowerShell）：
+
+```powershell
+cd agent
+go build -o tailfile-agent.exe ./cmd/tailfile-agent
+.\tailfile-agent.exe -demo
+```
+
+**Windows 注意：** 用 `-o` 指定输出文件名时，Go 不会自动加 `.exe`。如果写成 `-o tailfile-agent`，得到的文件没有扩展名，运行 `.\tailfile-agent` 时 Windows 会弹出"选择应用以打开"对话框。请在 `-o` 中写上 `.exe`；已经生成的文件可以用 `Rename-Item tailfile-agent tailfile-agent.exe` 改名。下文所有 `go build -o` 在 Windows 上都同理。
 
 `-demo` 会在进程内启动三个节点：`alpha` 和 `beta`（可写）以及 `gamma`（只读），所有者为 `ada@example.com`。不会加入任何 tailnet。API 位于 `http://127.0.0.1:8645`。`-demo` 会忽略 `-net`。
 
@@ -43,6 +55,14 @@ go build -tags server -o tailfile-wails .
 ./tailfile-wails -agent http://127.0.0.1:8645
 ```
 
+Windows（PowerShell）：
+
+```powershell
+cd gui-wails
+go build -tags server -o tailfile-wails.exe .
+.\tailfile-wails.exe -agent http://127.0.0.1:8645
+```
+
 打开 [http://127.0.0.1:17431](http://127.0.0.1:17431)。在 alpha 上复制 `hello.txt`，打开 beta，粘贴。传输行显示的是命令和进度。页面本身不会下载文件字节。
 
 MyGo：
@@ -53,6 +73,22 @@ go build -o tailfile-mygo .
 ./tailfile-mygo -agent http://127.0.0.1:8645
 ```
 
+Windows（PowerShell）：
+
+```powershell
+cd gui-mygo
+go build -o tailfile-mygo.exe .
+.\tailfile-mygo.exe -agent http://127.0.0.1:8645
+```
+
+Windows 上的 Wails 桌面窗口版（不带 `-tags server`，使用 WebView2）：
+
+```powershell
+cd gui-wails
+go build -o tailfile-wails.exe .
+.\tailfile-wails.exe -agent http://127.0.0.1:8645
+```
+
 如果修改了 React UI，需要先重新构建它，再构建 Go 二进制，因为二进制会内嵌 `frontend/dist`：
 
 ```sh
@@ -61,11 +97,11 @@ npm ci
 npm run build
 ```
 
-`scripts/build-all.sh` 会运行 agent 测试、MyGo 测试以及下文的交叉编译，包括 agent、MyGo 和 Wails server 模式的 linux/arm64 与 windows/arm64。Linux 桌面版保持宿主机架构（cgo）。Windows 桌面 arm64 与 Windows 桌面 amd64 一样，只是尽力支持。
+`scripts/build-all.sh` 是 bash 脚本（Windows 上需要 Git Bash 或 WSL），它为 Windows 目标输出的文件已经带 `.exe`。它会运行 agent 测试、MyGo 测试以及下文的交叉编译，包括 agent、MyGo 和 Wails server 模式的 linux/arm64 与 windows/arm64。Linux 桌面版保持宿主机架构（cgo）。Windows 桌面 arm64 与 Windows 桌面 amd64 一样，只是尽力支持。
 
 ## 真实 tailnet
 
-在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `-write` 列表时节点为只读。没有 `-read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
+在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `-write` 列表时节点为只读。没有 `-read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`；Windows 上是 `%USERPROFILE%\Tailfile`，即 PowerShell 中的 `$HOME\Tailfile`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
 
 `-net` 决定 agent 如何加入 tailnet：
 
@@ -87,6 +123,17 @@ export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the c
   -write "$HOME/Tailfile"
 ```
 
+Windows（PowerShell）：
+
+```powershell
+# Prefer the machine's own tailscaled. No auth key.
+.\tailfile-agent.exe -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+
+# Force an embedded node.
+$env:TS_AUTHKEY = 'tskey-auth-...'   # never commit this
+.\tailfile-agent.exe -net tsnet -hostname my-laptop -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+```
+
 如果给 agent 传了 `-hostname` 或 `-state`，状态目录（以及其中的 `gui-token`）就不在默认位置，启动 GUI 时需要用 `-state`（或 `-token-file`）指向同一个目录。
 
 `-authkey` 参数仍然可用，但会打印警告。建议使用 `TS_AUTHKEY` 或 Settings 界面，这样 key 不会出现在 shell 历史和服务命令中。进程启动时的读取顺序是 `TS_AUTHKEY`，然后是 `-authkey`，最后是文件 `<state>/ts-authkey`。key 为空时，tsnet 会打印一个交互式登录 URL，用浏览器打开即可。保存或清除 key 不会重启已经运行的节点，需要重启 agent。本地 API 只返回是否配置了 key，从不返回 key 本身，key 也从不写入日志。
@@ -98,6 +145,8 @@ export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the c
 | Linux | `~/.config/tailfile/<hostname>/` |
 | macOS | `~/Library/Application Support/tailfile/<hostname>/` |
 | Windows | `%AppData%\tailfile\<hostname>\` |
+
+Windows 上 `%AppData%` 即 `os.UserConfigDir()` 返回的 Roaming 目录，通常是 `C:\Users\<用户名>\AppData\Roaming`，PowerShell 中为 `$env:APPDATA`。例如：`Get-ChildItem "$env:APPDATA\tailfile"`。
 
 `<hostname>` 默认是 `tailfile-` 加上本机主机名。`gui-token` 在每次启动时重写（权限 `0600`；Windows 上 DACL 仅授权给当前用户）。`ts-authkey` 是保存的 auth key，权限相同，重启后保留。`jobs.json`、`transfers.json` 和 `service.json` 的权限也是 `0600`。System 模式不会创建 tailnet 节点密钥；`-hostname` 只用于命名状态目录。其他节点看到的名称是 tailscaled 原有的名称。
 
@@ -169,6 +218,16 @@ Windows 上的 `kardianos/service` 通过服务控制管理器（Service Control
 ./tailfile-agent service start
 ```
 
+Windows（PowerShell，不需要以管理员身份运行）：
+
+```powershell
+.\tailfile-agent.exe service install -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe service status
+.\tailfile-agent.exe service start
+```
+
+登录任务记录的是安装时 `tailfile-agent.exe` 的完整路径，所以安装后不要移动或改名该文件；如需移动，先 `service uninstall` 再重新安装。
+
 ## 各操作系统的构建
 
 安装 Go 1.27.3 后，同样的 `go build` 命令在各操作系统上都可用。生成本仓库的 Linux 虚拟机上的交叉编译结果见 `COMPARISON.md`。能编译通过不代表窗口能正常运行。
@@ -178,7 +237,9 @@ Windows 上的 `kardianos/service` 通过服务控制管理器（Service Control
 - 从 [go.dev](https://go.dev/dl/) 安装 Go 1.27.3；只有重新构建 Wails 前端时才需要 Node 22。
 - Wails 桌面版使用 WebView2，当前的 Windows 11 已自带。Windows 桌面二进制可以在 Linux 上用 `CGO_ENABLED=0` 交叉编译，但未在此运行过。
 - MyGo 和 agent 都是 `CGO_ENABLED=0` 构建。
-- 先运行 `tailfile-agent`，再运行 `tailfile-wails` 或 `tailfile-mygo`。
+- 缓存目录 `os.UserCacheDir()/tailfile` 在 Windows 上是 `%LocalAppData%\tailfile`；MyGo 的预览开关文件在 `%AppData%\tailfile\mygo-preview`。
+- 构建时 `-o` 要写成 `tailfile-agent.exe`、`tailfile-wails.exe`、`tailfile-mygo.exe`（见上文"不用 tailnet 先试一下"中的 PowerShell 命令）。
+- 先运行 `tailfile-agent.exe`，再运行 `tailfile-wails.exe` 或 `tailfile-mygo.exe`。
 
 ### macOS
 
@@ -248,13 +309,21 @@ tailscale ping my-laptop
 
 ## 测试
 
-下面两条命令都从仓库根目录执行（分别执行，第二条不要在 `agent/` 目录中运行）：
+在仓库根目录执行。Linux / macOS：
 
 ```sh
-cd agent && go test -count=1 -race .
-cd gui-mygo && go test -count=1 .
+(cd agent && go test -count=1 -race .)
+(cd gui-mygo && go test -count=1 .)
 ```
 
+Windows（PowerShell）：
+
+```powershell
+Push-Location agent; go test -count=1 .; Pop-Location
+Push-Location gui-mygo; go test -count=1 .; Pop-Location
+```
+
+`-race` 需要 cgo（Windows 上要装 gcc），所以 Windows 命令里没有加；如果已经装了 gcc，可以在 agent 那一行加上 `-race`。
 agent 测试覆盖：列目录、符号链接逃逸、范围读取、错误的分块哈希、续传、同一用户鉴权、push 与 pull（通过计数传输层证明字节流经执行方而不是编排方）、取消后续传、目录复制以及只读目标。加固相关测试为 `TestLocalRequiresTokenAndLoopbackHost`、`TestImportRespectsReadRoots`、`TestDefaultReadRootIsTailfile`、`TestListenRejectsNonLoopback`、`TestResolveOwnerTaggedDevice`、`TestGrantNarrowsRoots`、`TestFinishRejectsBadSHA256`、`TestResumeRestartsWhenSourceChanges`、`TestJobListSurvivesRestart` 和 `TestCacheKeySeparatesSameNames`。系统 tailscaled 模式由 `TestNetAutoSelectsSystem`、`TestNetAutoFallsBackToTsnet`、`TestNetSystemRequiresRunningTailscaled`、`TestNetSystemPermissionError`、`TestSystemWhoIsAuth`、`TestTailListenAddrsRejectsNonTailscale`、`TestSystemRebindOnIPChange`、`TestSystemNodeListFromStatus` 和 `TestProbeSystemTailscaledReturns` 覆盖。同名目标由 `TestExistingFilePromptsAndOverwriteIsAtomic`、`TestExistingFileSkipLeavesIt`、`TestConflictApplyToRestSkipsTheNextFile`、`TestPartialSameSourceResumesWithoutPrompt`、`TestOverwriteRenamesOnlyAfterHash`、`TestConflictSurvivesRestart` 和 `TestAnswerWithoutChoiceDoesNotOverwrite` 覆盖。auth key 文件由 `TestAuthKeyAPIStoresAndDoesNotEcho` 和 `TestAuthKeyRejectsEmptyAndMultiline` 覆盖。按用户服务的方案由 `TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem`、`TestStableServiceArgsAndConfig`、`TestWindowsLogonTaskDoesNotElevate`、`TestServicePlanStoresAuthKeyOutsideTheUnit` 和 `TestUserSystemdUnitIsPerUser` 覆盖。这些测试检查 unit 文本和任务 XML，不调用 `systemctl`、`launchctl` 或 `schtasks`。以上所有测试都使用进程内回环测试环境或伪造的 LocalAPI，而不是真实 tailnet，也不是 tsnet 的集成控制平面。默认测试不会联网回报。
 
 针对 system 模式、磁盘上的 token 和 auth key、`~/Tailfile`、服务安装、冲突对话框以及 Settings 界面的手动测试步骤见 [docs/TESTING.md](docs/TESTING.md)。

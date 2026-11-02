@@ -2,6 +2,8 @@
 
 自动化覆盖由 `agent` 和 `gui-mygo` 中的 `go test` 完成。本清单是由人在真实机器上走一遍的测试。请以普通用户身份进行。这里的任何步骤都不应要求 sudo、管理员密码或 UAC 提示。如果可以在 Settings 中填写 auth key，就不要把它粘贴到会记录历史的 shell 里。日志必须给出 `gui-token` 和 `ts-authkey` 的路径，且不得打印二者的值。
 
+Windows 上请用 PowerShell，并把下文的 `./tailfile-agent` 换成 `.\tailfile-agent.exe`（构建时用 `go build -o tailfile-agent.exe ./cmd/tailfile-agent`，Go 不会自动加 `.exe`）。`~/Tailfile` 在 Windows 上是 `%USERPROFILE%\Tailfile`（PowerShell：`$HOME\Tailfile`）。
+
 下文中的 `<hostname>` 是 `tailfile-` 加上本机主机名，除非你传了 `-hostname`。
 
 ## 状态文件
@@ -10,7 +12,7 @@
 | --- | --- |
 | Linux | `~/.config/tailfile/<hostname>/` |
 | macOS | `~/Library/Application Support/tailfile/<hostname>/` |
-| Windows | `%AppData%\tailfile\<hostname>\` |
+| Windows | `%AppData%\tailfile\<hostname>\`（PowerShell：`"$env:APPDATA\tailfile\<hostname>"`） |
 
 - [ ] 不带 `-state` 启动后，`gui-token` 位于该目录，权限为 `0600`（Windows：文件的 DACL 授权给当前用户，不授权给其他用户）。
 - [ ] agent 日志打印 `gui-token` 的路径，而不是 token 本身。
@@ -31,6 +33,12 @@
 ./tailfile-agent -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
 ```
 
+Windows（PowerShell）：
+
+```powershell
+.\tailfile-agent.exe -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+```
+
 - [ ] 日志显示 system 模式，而不是 tsnet。`GET /v1/local/settings`（bearer 取自 `gui-token`）显示 `"net": "system"`。
 - [ ] 监听地址是该节点的 Tailscale 地址、端口 8644，而不是 `0.0.0.0`。
 - [ ] 同一 tailnet、同一 tailnet 用户下的第二台机器能列出此节点，并能读取 `~/Tailfile`。
@@ -47,6 +55,14 @@
 ./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
 ./tailfile-agent service start
 ./tailfile-agent service status
+```
+
+Windows（PowerShell）：
+
+```powershell
+.\tailfile-agent.exe service install -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe service start
+.\tailfile-agent.exe service status
 ```
 
 - [ ] 安装时输出一行按用户安装成功的信息，并且不提示输入密码。
@@ -70,10 +86,11 @@
 
 ### Windows
 
+- [ ] 二进制是 `tailfile-agent.exe`（没有扩展名的文件运行时会弹出"选择应用以打开"对话框）。
 - [ ] Task Scheduler 中有一个属于当前用户、名为 `TailfileAgent` 的任务。它不会出现在 `services.msc` 中。
 - [ ] 该任务的运行级别为 Least Privilege。创建时没有出现 UAC。
 - [ ] 注销后重新登录。agent 以当前用户身份启动。
-- [ ] `service start`、`service stop` 和 `service status` 分别与 `schtasks /Run`、`/End` 和 `/Query` 一致。
+- [ ] `service start`、`service stop` 和 `service status` 分别与 `schtasks /Run`、`/End` 和 `/Query` 一致（例如 `schtasks /Query /TN TailfileAgent`）。
 
 ## 冲突提示
 
@@ -95,6 +112,6 @@
 - [ ] 保存之前，界面显示未配置 key。`GET /v1/local/settings` 返回 `"authKeyConfigured": false`，且没有 key 字段。
 - [ ] 粘贴 key 并保存。GUI 提示需要重启。响应包含 `configured: true` 和 `restartRequired: true`，且不含 key。磁盘上的 `ts-authkey` 与你粘贴的 key 一致。agent 日志中没有该 key。
 - [ ] 使用 `-net tsnet` 且不设置 `TS_AUTHKEY` 重启。日志说明 key 来自文件，且不打印它。节点加入 tailnet。
-- [ ] export 一个不同的 `TS_AUTHKEY` 并重启。日志显示来源为 `TS_AUTHKEY`。文件不变。节点使用环境变量中的值。
+- [ ] export 一个不同的 `TS_AUTHKEY` 并重启（Windows PowerShell：`$env:TS_AUTHKEY = '...'`）。日志显示来源为 `TS_AUTHKEY`。文件不变。节点使用环境变量中的值。
 - [ ] 在 Settings 中清除，然后在不设置 `TS_AUTHKEY`、不带 `-authkey` 的情况下重启。文件已删除。tsnet 打印登录 URL，而不是使用旧 key。
 - [ ] 在 tailnet 端口（8644）上 `GET` 设置 URL。返回的不是设置文档。
