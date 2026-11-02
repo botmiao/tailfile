@@ -1,47 +1,47 @@
-# Manual test checklist
+# 手动测试清单
 
-Automated coverage is `go test` in `agent` and `gui-mygo`. This list is the pass a person does on a machine. Do it as a normal user. Nothing here should ask for sudo, an administrator password, or a UAC prompt. Do not paste an auth key into a shell that records history if you can put it in Settings instead. Logs must name `gui-token` and `ts-authkey` paths and must not print either value.
+自动化覆盖由 `agent` 和 `gui-mygo` 中的 `go test` 完成。本清单是由人在真实机器上走一遍的测试。请以普通用户身份进行。这里的任何步骤都不应要求 sudo、管理员密码或 UAC 提示。如果可以在 Settings 中填写 auth key，就不要把它粘贴到会记录历史的 shell 里。日志必须给出 `gui-token` 和 `ts-authkey` 的路径，且不得打印二者的值。
 
-`<hostname>` below is `tailfile-` plus the machine hostname, unless you passed `-hostname`.
+下文中的 `<hostname>` 是 `tailfile-` 加上本机主机名，除非你传了 `-hostname`。
 
-## State files
+## 状态文件
 
-| OS | State directory |
+| 操作系统 | 状态目录 |
 | --- | --- |
 | Linux | `~/.config/tailfile/<hostname>/` |
 | macOS | `~/Library/Application Support/tailfile/<hostname>/` |
 | Windows | `%AppData%\tailfile\<hostname>\` |
 
-- [ ] After a start with no `-state`, `gui-token` is in that directory, mode `0600` (Windows: the file's DACL grants the current user and not other users).
-- [ ] The agent log prints the `gui-token` path and not the token.
-- [ ] Restarting the agent changes the token. The GUI that was already open fails until it is restarted and reads the new file.
-- [ ] `ts-authkey` is absent until you save one. After a save it is mode `0600` (Windows: current-user DACL) and still absent from the log and from `GET /v1/local/settings`.
+- [ ] 不带 `-state` 启动后，`gui-token` 位于该目录，权限为 `0600`（Windows：文件的 DACL 授权给当前用户，不授权给其他用户）。
+- [ ] agent 日志打印 `gui-token` 的路径，而不是 token 本身。
+- [ ] 重启 agent 会更换 token。之前已打开的 GUI 会失败，直到重启并读取新文件。
+- [ ] 在保存之前 `ts-authkey` 不存在。保存后其权限为 `0600`（Windows：仅当前用户的 DACL），并且仍不会出现在日志和 `GET /v1/local/settings` 中。
 
-## Default share
+## 默认共享
 
-- [ ] Start with no `-read` and no `-write`. The agent creates `~/Tailfile` mode `0700` and shares only that directory.
-- [ ] A paste into that folder works. A paste into a path outside it is refused.
-- [ ] `-demo` does not create `~/Tailfile`. Demo shares its temporary fixture directories.
+- [ ] 不带 `-read` 和 `-write` 启动。agent 创建权限为 `0700` 的 `~/Tailfile`，并且只共享该目录。
+- [ ] 粘贴到该文件夹可以成功。粘贴到该文件夹以外的路径会被拒绝。
+- [ ] `-demo` 不会创建 `~/Tailfile`。Demo 共享其临时测试数据目录。
 
-## System tailscale mode
+## 系统 tailscale 模式
 
-Requires a tailscaled that is already logged in as you. No auth key.
+需要一个已经以你的身份登录的 tailscaled。不需要 auth key。
 
 ```sh
 ./tailfile-agent -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
 ```
 
-- [ ] The log says system mode, not tsnet. `GET /v1/local/settings` (bearer from `gui-token`) shows `"net": "system"`.
-- [ ] The listener is on the node's Tailscale addresses, port 8644, and not on `0.0.0.0`.
-- [ ] A second machine on the same tailnet, same tailnet user, lists this node and can read `~/Tailfile`.
-- [ ] A different tailnet user is refused.
-- [ ] On Linux, if the log says the LocalAPI socket is not readable, `sudo tailscale set --operator=$USER` and start the agent again as that user. The agent itself still must not be run with sudo.
-- [ ] `-net auto` selects system when tailscaled is Running and has a Tailscale IP, and tsnet otherwise. The log says which and why.
-- [ ] Quit tailscaled, or take away its IP, and confirm the agent rebinds or exits rather than listening on a non-Tailscale address.
+- [ ] 日志显示 system 模式，而不是 tsnet。`GET /v1/local/settings`（bearer 取自 `gui-token`）显示 `"net": "system"`。
+- [ ] 监听地址是该节点的 Tailscale 地址、端口 8644，而不是 `0.0.0.0`。
+- [ ] 同一 tailnet、同一 tailnet 用户下的第二台机器能列出此节点，并能读取 `~/Tailfile`。
+- [ ] 其他 tailnet 用户会被拒绝。
+- [ ] 在 Linux 上，如果日志提示 LocalAPI socket 不可读，执行 `sudo tailscale set --operator=$USER`，然后以该用户身份重新启动 agent。agent 本身仍不得用 sudo 运行。
+- [ ] 当 tailscaled 处于 Running 状态且有 Tailscale IP 时，`-net auto` 选择 system，否则选择 tsnet。日志会说明选了哪个以及原因。
+- [ ] 退出 tailscaled，或拿掉它的 IP，确认 agent 会重新绑定或退出，而不是在非 Tailscale 地址上监听。
 
-## Per-user service
+## 按用户安装的服务
 
-Use the same flags you want the background process to keep. Example:
+使用你希望后台进程保留的同一组参数。示例：
 
 ```sh
 ./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
@@ -49,52 +49,52 @@ Use the same flags you want the background process to keep. Example:
 ./tailfile-agent service status
 ```
 
-- [ ] Install prints a per-user success line and does not prompt for a password.
-- [ ] `service.json` in the state directory has `"scope": "user"`, the executable, and the flags. It does not contain an auth key.
-- [ ] The unit or task also contains the resolved `-hostname`, `-state`, and `-net` when you omitted them, and `-read` pointing at `~/Tailfile` when you omitted `-read`.
-- [ ] A second `service install` fails and tells you to uninstall first.
-- [ ] `./tailfile-agent service install --system` fails and does not write a system unit, a LaunchDaemon, or a Windows service.
-- [ ] `service stop` then `service status` reports stopped. `service uninstall` removes the definition. `service.json` is removed. `ts-authkey` is not removed by uninstall.
+- [ ] 安装时输出一行按用户安装成功的信息，并且不提示输入密码。
+- [ ] 状态目录中的 `service.json` 含有 `"scope": "user"`、可执行文件路径和参数，不含 auth key。
+- [ ] 当你省略 `-hostname`、`-state`、`-net` 时，unit 或任务中也包含解析后的这些值；省略 `-read` 时，包含指向 `~/Tailfile` 的 `-read`。
+- [ ] 第二次 `service install` 会失败，并提示先卸载。
+- [ ] `./tailfile-agent service install --system` 会失败，且不会写入系统 unit、LaunchDaemon 或 Windows 服务。
+- [ ] 先 `service stop` 再 `service status`，报告已停止。`service uninstall` 删除服务定义，`service.json` 也被删除。卸载不会删除 `ts-authkey`。
 
 ### Linux
 
-- [ ] The unit is `~/.config/systemd/user/tailfile-agent.service`, wanted by `default.target`. There is no `/etc/systemd/system/tailfile-agent.service`.
-- [ ] Log out and back in. The agent is running without a manual start.
-- [ ] `loginctl enable-linger "$USER"`, then reboot and do not log in. The user manager still runs the agent. Disable linger afterwards if you do not want that.
+- [ ] unit 为 `~/.config/systemd/user/tailfile-agent.service`，由 `default.target` 拉起（wanted by）。不存在 `/etc/systemd/system/tailfile-agent.service`。
+- [ ] 注销后重新登录。agent 无需手动启动即在运行。
+- [ ] 执行 `loginctl enable-linger "$USER"`，然后重启且不登录。用户管理器仍会运行 agent。如果不需要这种行为，事后关闭 linger。
 
 ### macOS
 
-- [ ] The plist is `~/Library/LaunchAgents/tailfile-agent.plist`. There is no plist under `/Library/LaunchDaemons`.
-- [ ] Install alone does not start the process. `service start` loads it (`launchctl list` shows `tailfile-agent`).
-- [ ] `service stop` unloads it. It does not come back at the next login until `service start`.
+- [ ] plist 为 `~/Library/LaunchAgents/tailfile-agent.plist`。`/Library/LaunchDaemons` 下没有 plist。
+- [ ] 仅安装不会启动进程。`service start` 会加载它（`launchctl list` 显示 `tailfile-agent`）。
+- [ ] `service stop` 会卸载它。下次登录时不会自动恢复，直到执行 `service start`。
 
 ### Windows
 
-- [ ] Task Scheduler has a task named `TailfileAgent` for the current user. It is not listed in `services.msc`.
-- [ ] The task's run level is Least Privilege. Creating it did not show UAC.
-- [ ] Log off and on. The agent starts as the current user.
-- [ ] `service start`, `service stop`, and `service status` match `schtasks /Run`, `/End`, and `/Query`.
+- [ ] Task Scheduler 中有一个属于当前用户、名为 `TailfileAgent` 的任务。它不会出现在 `services.msc` 中。
+- [ ] 该任务的运行级别为 Least Privilege。创建时没有出现 UAC。
+- [ ] 注销后重新登录。agent 以当前用户身份启动。
+- [ ] `service start`、`service stop` 和 `service status` 分别与 `schtasks /Run`、`/End` 和 `/Query` 一致。
 
-## Conflict prompt
+## 冲突提示
 
-On two nodes (or one node and a local import), copy a file onto a path that already has a finished file with the same name and different contents.
+在两个节点上（或一个节点加一次本地导入），把文件复制到一个已存在同名、内容不同且已完成的文件的路径上。
 
-- [ ] The transfer stays at `conflict`. The old destination bytes are unchanged. Wails and MyGo both show 目标已有同名文件, the path, 覆盖, 跳过, and 对后续冲突都这样处理.
-- [ ] 跳过 leaves the destination unchanged and the job completes.
-- [ ] Repeat, choose 覆盖. The destination becomes the source bytes. While the copy is in progress the old file is still the old bytes (the new bytes are in `*.tailfile-partial` until the hash check).
-- [ ] Copy a directory of two conflicting files. Check 对后续冲突都这样处理 and choose 跳过 on the first. The second is skipped with no second dialog.
-- [ ] Stop the agent while a dialog is open. Start it again. The job is still `conflict` (not `interrupted`), and the dialog comes back. Answer it. The copy finishes.
-- [ ] Interrupt a copy that is mid-file, leaving a partial whose meta matches the source size and mtime, and leave a finished file at the destination. Resume. There is no dialog, and the finished file is replaced only after the hash matches.
-- [ ] Cancel from the dialog (the transfer Cancel control, not 覆盖 or 跳过). The destination is unchanged.
+- [ ] 传输停在 `conflict`。目标原有字节不变。Wails 和 MyGo 都显示 目标已有同名文件、路径、覆盖、跳过 以及 对后续冲突都这样处理。
+- [ ] 选择 跳过 后目标不变，任务完成。
+- [ ] 重复一次，选择 覆盖。目标变为源文件的字节。复制过程中旧文件仍是旧字节（新字节在 `*.tailfile-partial` 中，直到哈希校验通过）。
+- [ ] 复制一个包含两个冲突文件的目录。在第一个冲突时勾选 对后续冲突都这样处理 并选择 跳过。第二个会被跳过，且不会再弹出对话框。
+- [ ] 在对话框打开时停止 agent，然后再次启动。任务仍是 `conflict`（而不是 `interrupted`），对话框会重新出现。作答后复制完成。
+- [ ] 在文件复制到一半时中断，留下一个 meta 与源文件大小和 mtime 一致的 partial，同时在目标处留一个已完成的文件。恢复传输。不会出现对话框，且只有在哈希匹配后才替换已完成的文件。
+- [ ] 从对话框中取消（使用传输的 Cancel 控件，而不是 覆盖 或 跳过）。目标不变。
 
-## Auth key setting
+## Auth key 设置
 
-Use a disposable tsnet auth key. Do not use a key you cannot revoke.
+使用一个可丢弃的 tsnet auth key。不要使用你无法吊销的 key。
 
-- [ ] Settings in both GUIs shows the current net mode (`system` or `tsnet`, and the requested `-net` when it differs).
-- [ ] Before a save, the screen says the key is not configured. `GET /v1/local/settings` has `"authKeyConfigured": false` and no key field.
-- [ ] Paste a key and save. The GUI says to restart. The response has `configured: true` and `restartRequired: true` and does not contain the key. `ts-authkey` on disk matches the key you pasted. The agent log does not.
-- [ ] Restart with `-net tsnet` and without `TS_AUTHKEY`. The log says the key came from the file and does not print it. The node joins.
-- [ ] Export a different `TS_AUTHKEY` and restart. The log says the source is `TS_AUTHKEY`. The file is unchanged. The node uses the environment value.
-- [ ] Clear in Settings, restart with no `TS_AUTHKEY` and no `-authkey`. The file is gone. tsnet prints a login URL instead of using the old key.
-- [ ] `GET` the settings URL on the tailnet port (8644). It is not the settings document.
+- [ ] 两个 GUI 的 Settings 都显示当前网络模式（`system` 或 `tsnet`；当请求的 `-net` 不同时也会显示它）。
+- [ ] 保存之前，界面显示未配置 key。`GET /v1/local/settings` 返回 `"authKeyConfigured": false`，且没有 key 字段。
+- [ ] 粘贴 key 并保存。GUI 提示需要重启。响应包含 `configured: true` 和 `restartRequired: true`，且不含 key。磁盘上的 `ts-authkey` 与你粘贴的 key 一致。agent 日志中没有该 key。
+- [ ] 使用 `-net tsnet` 且不设置 `TS_AUTHKEY` 重启。日志说明 key 来自文件，且不打印它。节点加入 tailnet。
+- [ ] export 一个不同的 `TS_AUTHKEY` 并重启。日志显示来源为 `TS_AUTHKEY`。文件不变。节点使用环境变量中的值。
+- [ ] 在 Settings 中清除，然后在不设置 `TS_AUTHKEY`、不带 `-authkey` 的情况下重启。文件已删除。tsnet 打印登录 URL，而不是使用旧 key。
+- [ ] 在 tailnet 端口（8644）上 `GET` 设置 URL。返回的不是设置文档。
