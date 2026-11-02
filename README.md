@@ -1,13 +1,13 @@
 # Tailfile
 
-一个简短的技术验证（spike）：在同一个 Tailscale 文件 agent 之上做了两个 Finder 风格的外壳，方便你在自己的机器上试用，并从中挑选 GUI 技术栈。这不是产品。没有删除功能，没有提权，也没有第二个窗格。
+一个简短的技术验证（spike）：在同一个 Tailscale 文件 agent 之上做了三个 Finder 风格的外壳（Wails、MyGo、Native Shell），方便你在自己的机器上试用，并从中挑选 GUI 技术栈。这不是产品。没有删除功能，没有提权，也没有第二个窗格。
 
 左侧窗格是一棵树。根节点是运行 agent 的 tailnet 节点，下面是文件夹。右侧窗格是文件列表（名称、大小、修改时间），以及文本、图片和 PDF 的预览。在节点 A 上复制，粘贴到节点 B 的某个文件夹。GUI 只负责让其中一个 agent 推送（push）或拉取（pull），文件字节直接从 A 传到 B。
 
 ```
-gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
-                                              |                         |
-                                              +---- job: push or pull --+
+gui-wails / gui-mygo / gui-nsh  --localhost-->  local agent  --tailnet-->  peer agent
+                                                    |                         |
+                                                    +---- job: push or pull --+
 ```
 
 ## 目录结构
@@ -17,11 +17,14 @@ gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
 | `agent/` | 共享的 Go 模块。文件 API、可续传分块、复制任务、系统 tailscaled 或 tsnet。 |
 | `gui-wails/` | [Wails v3](https://v3.wails.io) 外壳。React UI，也可以在浏览器中运行（`-tags server`）。 |
 | `gui-mygo/` | [MyGo](https://mygo.egoist.dev) 外壳。原生树、表格和拖出。 |
-| `COMPARISON.md` | 两个框架在本次 spike 中的实际表现。 |
+| `gui-nsh/` | [Native Shell](https://nsh.dev) 外壳。Rust 写的单窗格文件管理器，Linux 上是 GTK 4，Windows 上是 Win32/Direct2D。 |
+| `COMPARISON.md` | 三个框架在本次 spike 中的实际表现。 |
 
-两个 GUI 都通过 `http://127.0.0.1:8645` 与 agent 通信。它们自身不内嵌 tailnet 节点。每台机器运行一个 agent。无论 agent 使用的是系统 tailscaled 还是内嵌的 tsnet 节点，GUI API 都相同。
+三个 GUI 都通过 `http://127.0.0.1:8645` 与 agent 通信。它们自身不内嵌 tailnet 节点。每台机器运行一个 agent。无论 agent 使用的是系统 tailscaled 还是内嵌的 tsnet 节点，GUI API 都相同。
 
-需要 **Go 1.27.3**（MyGo v0.6.4 在更旧的 Go 上无法构建）。Wails v3.0.0 要求 Go 1.26 或更新版本。如果要修改 Wails UI，前端需要 Node 22。`go.work` 把三个模块关联在一起。
+需要 **Go 1.27.3**（MyGo v0.6.4 在更旧的 Go 上无法构建）。Wails v3.0.0 要求 Go 1.26 或更新版本。如果要修改 Wails UI，前端需要 Node 22。`go.work` 把三个 Go 模块关联在一起。
+
+Native Shell 外壳是独立的 Rust crate（`gui-nsh/`），不进 `go.work`。它用 **Rust stable**（edition 2024；本机验证的是 rustc 1.99.1）和 crates.io 上的 `nsh-core` / `nsh-base` / `nsh-platform-*` **0.3.0**。`nsh` 命令行（Apache-2.0，本机安装的是 `nsh 0.3.0 (76fa8a7)`）可以 `nsh check` / `nsh run`，但日常构建用 `cargo build` 即可，不强制安装 CLI。Linux 编译需要 GTK 4 开发包。Windows 上是 Win32/Direct2D，不需要 GTK。macOS 的 AppKit 后端在 crate 里，本环境没有 Mac，没有编译也没有运行。
 
 ## 不用 tailnet 先试一下
 
@@ -79,6 +82,30 @@ Windows（PowerShell）：
 cd gui-mygo
 go build -o tailfile-mygo.exe .
 .\tailfile-mygo.exe -agent http://127.0.0.1:8645
+```
+
+Native Shell（第二个终端，仓库根目录）。Linux / macOS：
+
+```sh
+cd gui-nsh
+cargo build --release
+./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+```
+
+Windows（PowerShell）。二进制名以 `.exe` 结尾。Rust 不会在 `-o` 里自动加扩展名；这里不用 `-o`，Cargo 自己生成 `tailfile-nsh.exe`：
+
+```powershell
+cd gui-nsh
+cargo build --release
+.\target\release\tailfile-nsh.exe -agent http://127.0.0.1:8645
+```
+
+`cargo run --release -- -agent http://127.0.0.1:8645` 等价。`-state` 和 `-token-file` 与另外两个 GUI 相同：agent 用了非默认状态目录时，GUI 也要指向它。也可以设 `TAILFILE_AGENT`、`TAILFILE_STATE`、`TAILFILE_TOKEN_FILE`（`nsh run` 不走 `main`，读这三个环境变量和默认状态目录）。
+
+Linux 上先装编译依赖（Ubuntu 24.04 的 GTK 4.14 即可）：
+
+```sh
+sudo apt install pkg-config libgtk-4-dev clang
 ```
 
 Windows 上的 Wails 桌面窗口版（不带 `-tags server`，使用 WebView2）：
@@ -166,7 +193,7 @@ Tailscale grants 可以收窄（以及共享）访问权限。如果 WhoIs 的 `
 
 grant 中的路径会与本节点的 `-read` 和 `-write` 列表取交集。列表之外的路径会被丢弃，因此 grant 无法扩大节点的共享范围。比已配置根目录更宽的 grant 会保留已配置的根目录。没有该 capability 时回退到同一用户规则。capability 存在但为空，或不是合法 JSON 时，一律拒绝（fail closed）。
 
-localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。两个 GUI 读取同一个文件（或通过 `-token-file` / `-state` 指定）。Wails 会把它作为 `window.TAILFILE_TOKEN` 注入 `index.html`，并把页面标记为 `no-store`，因为浏览器自己无法读取该文件。MyGo 发送 `Origin: mygo://tailfile`。请求必须带 `Authorization: Bearer …`。`Host` 必须是回环地址，这样可以拦截指向 127.0.0.1 的 DNS rebinding 域名。不设置 `Access-Control-Allow-Origin: *`。只有当浏览器 `Origin` 是 Wails server（`http://127.0.0.1:17431`、`localhost` 或 `[::1]`，端口 17431）、`wails://` 桌面页面、`http://wails.localhost` 或 `mygo://tailfile` 时才会回显。空 `Origin` 配合 bearer 是允许的（MyGo、curl、测试）。预检 `OPTIONS` 不需要 bearer。把 token 放进回环地址上的 Wails 页面，无法阻止已经能连接 `127.0.0.1:17431` 的其他系统用户；`0600` 文件权限可以阻止其他用户从磁盘读取 token。
+localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。三个 GUI 读取同一个文件（或通过 `-token-file` / `-state` 指定）。Wails 会把它作为 `window.TAILFILE_TOKEN` 注入 `index.html`，并把页面标记为 `no-store`，因为浏览器自己无法读取该文件。MyGo 发送 `Origin: mygo://tailfile`。Native Shell 不设置 `Origin`（空 Origin 加上 bearer 是 agent 允许的原生客户端路径），请求走本机 HTTP，不经过浏览器。请求必须带 `Authorization: Bearer …`。`Host` 必须是回环地址，这样可以拦截指向 127.0.0.1 的 DNS rebinding 域名。不设置 `Access-Control-Allow-Origin: *`。只有当浏览器 `Origin` 是 Wails server（`http://127.0.0.1:17431`、`localhost` 或 `[::1]`，端口 17431）、`wails://` 桌面页面、`http://wails.localhost` 或 `mygo://tailfile` 时才会回显。空 `Origin` 配合 bearer 是允许的（MyGo、Native Shell、curl、测试）。预检 `OPTIONS` 不需要 bearer。把 token 放进回环地址上的 Wails 页面，无法阻止已经能连接 `127.0.0.1:17431` 的其他系统用户；`0600` 文件权限可以阻止其他用户从磁盘读取 token。
 
 Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式（`system`、`tsnet` 或 `demo`）、请求的 `-net` 值以及 `authKeyConfigured`。`PUT /v1/local/settings/authkey` 携带 `{"authKey":"..."}` 会写入 `<state>/ts-authkey`。`DELETE /v1/local/settings/authkey` 会删除它。这两个写操作的响应都会设置 `restartRequired`，且不回显 key。tailnet 监听器不提供这些路由。
 
@@ -174,7 +201,7 @@ Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式�
 
 复制是两个节点之一上的一个任务（job）。**Push** 表示源端读取自己的磁盘并写入目标端。**Pull** 表示目标端读取源端并写入自己的磁盘。分块大小为 1 MiB，每块有各自的 SHA-256。partial 文件（`*.tailfile-partial`）及其 meta（`*.tailfile-meta`，权限 `0600`）记录源文件大小、源文件 mtime，以及完成时的整文件 SHA-256。完成时如果该哈希不匹配，就删除 partial。之后续传时如果发现源文件大小或 mtime 变了，该文件会从头开始。
 
-当目标路径已存在且是文件时，任务暂停，状态为 `conflict`。两个 GUI 都会询问 覆盖（overwrite）或 跳过（skip）。勾选 对后续冲突都这样处理 会把该选择保存为同一任务中后续文件的策略。没有明确选择时绝不替换文件。覆盖会把新字节写入 partial，只有在整文件 SHA-256 匹配后才把 partial 重命名到目标位置。哈希不对会删除 partial 并保留旧文件。meta 仍与当前源文件大小和 mtime 一致的 partial 会直接续传而不提示，包括旧目标文件还在时被中断的覆盖。目标是目录时报错，而不是提示。待处理的冲突、逐文件选择和"应用到后续"策略都保存在 `jobs.json` 中，因此重启后仍然有效。通过 `POST /v1/transfers/{id}/conflict`（GUI 发起的 push 或 pull）或 `POST /v1/jobs/{id}/conflict`（本地导入任务）作答：
+当目标路径已存在且是文件时，任务暂停，状态为 `conflict`。三个 GUI 都会询问 覆盖（overwrite）或 跳过（skip）。勾选 对后续冲突都这样处理 会把该选择保存为同一任务中后续文件的策略。没有明确选择时绝不替换文件。覆盖会把新字节写入 partial，只有在整文件 SHA-256 匹配后才把 partial 重命名到目标位置。哈希不对会删除 partial 并保留旧文件。meta 仍与当前源文件大小和 mtime 一致的 partial 会直接续传而不提示，包括旧目标文件还在时被中断的覆盖。目标是目录时报错，而不是提示。待处理的冲突、逐文件选择和"应用到后续"策略都保存在 `jobs.json` 中，因此重启后仍然有效。通过 `POST /v1/transfers/{id}/conflict`（GUI 发起的 push 或 pull）或 `POST /v1/jobs/{id}/conflict`（本地导入任务）作答：
 
 ```json
 {"action": "overwrite", "applyToRest": false}
@@ -238,8 +265,9 @@ Windows（PowerShell，不需要以管理员身份运行）：
 - Wails 桌面版使用 WebView2，当前的 Windows 11 已自带。Windows 桌面二进制可以在 Linux 上用 `CGO_ENABLED=0` 交叉编译，但未在此运行过。
 - MyGo 和 agent 都是 `CGO_ENABLED=0` 构建。
 - 缓存目录 `os.UserCacheDir()/tailfile` 在 Windows 上是 `%LocalAppData%\tailfile`；MyGo 的预览开关文件在 `%AppData%\tailfile\mygo-preview`。
-- 构建时 `-o` 要写成 `tailfile-agent.exe`、`tailfile-wails.exe`、`tailfile-mygo.exe`（见上文"不用 tailnet 先试一下"中的 PowerShell 命令）。
-- 先运行 `tailfile-agent.exe`，再运行 `tailfile-wails.exe` 或 `tailfile-mygo.exe`。
+- 构建时 `-o` 要写成 `tailfile-agent.exe`、`tailfile-wails.exe`、`tailfile-mygo.exe`（见上文"不用 tailnet 先试一下"中的 PowerShell 命令）。Native Shell 用 `cargo build --release`，产物是 `gui-nsh\target\release\tailfile-nsh.exe`。
+- 先运行 `tailfile-agent.exe`，再运行 `tailfile-wails.exe`、`tailfile-mygo.exe` 或 `tailfile-nsh.exe`。
+- Native Shell 需要 [rustup](https://rustup.rs) 的 stable 工具链。不需要 GTK，也不需要先安装 `nsh` CLI。可选：`irm https://nsh.dev/install.ps1 | iex`，然后在 `gui-nsh` 里 `nsh run`（默认 agent 地址和默认状态目录；非默认目录用 `$env:TAILFILE_STATE`）。窗口是 Win32，用 Direct2D 绘制。PDF 文本预览不依赖 WebView2；本外壳没有把 PDF 交给 WebView2。
 
 ### macOS
 
@@ -251,6 +279,14 @@ Windows（PowerShell，不需要以管理员身份运行）：
   ```
 
 - agent、MyGo 和 Wails **server** 模式（`-tags server`）可以交叉编译到 darwin amd64 和 arm64。server 模式是浏览器 UI，不是 Mac 窗口。
+- Native Shell 的 macOS 后端是 AppKit（`nsh-platform-macos` 0.3.0，文档要求 macOS 14+ 和 Xcode 命令行工具）。Linux 上不能编这个后端。请在 Mac 上：
+
+  ```sh
+  cd gui-nsh && cargo build --release
+  ./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+  ```
+
+  本仓库的 Linux 虚拟机没有编过、也没有跑过这个二进制。
 - MyGo 的拖出使用原生文件拖拽，拖的是磁盘上已存在的路径。
 
 ### Ubuntu
@@ -259,6 +295,8 @@ Windows（PowerShell，不需要以管理员身份运行）：
 sudo apt install gcc pkg-config libgtk-4-dev libwebkitgtk-6.0-dev
 # MyGo's window loads GTK 3 at runtime:
 sudo apt install libgtk-3-0
+# Native Shell compiles against GTK 4:
+sudo apt install pkg-config libgtk-4-dev clang
 cd gui-wails && go build -o tailfile-wails .
 ```
 
@@ -283,11 +321,11 @@ export WEBKIT_DISABLE_DMABUF_RENDERER=1
 
 ## 把文件拖到系统文件管理器
 
-两个外壳都可以把文件下载到本地缓存（`POST /v1/local/cache`），然后显示它（`POST /v1/local/reveal`：macOS 上用 Finder，Windows 上用资源管理器，Linux 上对父目录执行 `xdg-open`）。缓存位于 `os.UserCacheDir()/tailfile`（权限 `0700`），而不是状态目录。每个文件权限为 `0600`，文件名由节点 id 加远程路径的哈希生成，因此两个 `note.txt` 不会互相覆盖。
+三个外壳都可以把文件下载到本地缓存（`POST /v1/local/cache`），然后显示它（`POST /v1/local/reveal`：macOS 上用 Finder，Windows 上用资源管理器，Linux 上对父目录执行 `xdg-open`）。缓存位于 `os.UserCacheDir()/tailfile`（权限 `0700`），而不是状态目录。每个文件权限为 `0600`，文件名由节点 id 加远程路径的哈希生成，因此两个 `note.txt` 不会互相覆盖。
 
 之后 MyGo 可以用 `transfer.FileData` 把该缓存路径拖出去。该路径必须已经存在，不支持 promised-file 拖拽。
 
-Wails v3 可以接受拖放**到**窗口上（`EnableFileDrop`，带 `data-file-drop-target` 的元素）。没有找到能把本地路径拖出到资源管理器或 Finder 的 Wails API。Wails UI 会显示缓存路径供你复制，Reveal 会打开它。浏览器版（`-tags server`）在拖放时看不到系统路径，所以它还有一个"要导入的本地路径"输入框。MyGo 也有同样的输入框，另外支持原生拖放到文件列表。
+Wails v3 可以接受拖放**到**窗口上（`EnableFileDrop`，带 `data-file-drop-target` 的元素）。没有找到能把本地路径拖出到资源管理器或 Finder 的 Wails API。Wails UI 会显示缓存路径供你复制，Reveal 会打开它。浏览器版（`-tags server`）在拖放时看不到系统路径，所以它还有一个"要导入的本地路径"输入框。MyGo 也有同样的输入框，另外支持原生拖放到文件列表。Native Shell 同样有输入框，文件列表接受系统拖入（`on_file_drop`），缓存之后点「显示」。没有找到从 Native Shell 视图把已有路径拖出到资源管理器 / Finder / Nautilus 的 API，所以它和 Wails 一样停在缓存路径加「显示」。
 
 ## sing-box（TUN）与 Tailscale
 
@@ -328,10 +366,12 @@ agent 测试覆盖：列目录、符号链接逃逸、范围读取、错误的�
 
 针对 system 模式、磁盘上的 token 和 auth key、`~/Tailfile`、服务安装、冲突对话框以及 Settings 界面的手动测试步骤见 [docs/TESTING.md](docs/TESTING.md)。
 
-选中文件时，两个 GUI 都会显示预览。各自有一个会持久保存的 Preview on / Preview off 开关（默认开启）。Wails 将其保存在 `localStorage` 的 `tailfile.preview` 下。MyGo 在 `UserConfigDir/tailfile/mygo-preview`（权限 `0600`）中保存 `0` 或 `1`。图片和 PDF 字节通过 bearer token 获取，因为 `<img src>` 或 PDF.js URL 不会发送 `Authorization`。
+选中文件时，三个 GUI 都会显示预览。各自有一个会持久保存的预览开关（默认开启）。Wails 将其保存在 `localStorage` 的 `tailfile.preview` 下。MyGo 在 `UserConfigDir/tailfile/mygo-preview`（权限 `0600`）中保存 `0` 或 `1`。Native Shell 在 `UserConfigDir/tailfile/nsh-preview` 中同样保存 `0` 或 `1`（界面上是「预览开 / 预览关」）。图片和 PDF 字节通过 bearer token 获取，因为 `<img src>` 或 PDF.js URL 不会发送 `Authorization`。Native Shell 把图片字节写到用户缓存再交给图片控件；PDF 显示的是 agent 提取的文本，不是整页渲染（Native Shell 的 web view 授权只覆盖 http/https，打不开本地 `file://` PDF）。
 
 MyGo 的测试用 `ui.NewTester` 构建窗口，并点击 Copy 和 Paste。`TestConflictAndSettingsDialogs` 检查冲突对话框（覆盖、跳过、对后续冲突都这样处理）以及显示网络模式的设置视图。它不会打开显示器。
 
+Native Shell 的 `cargo test` 覆盖 token 路径、`-agent` / `-state` / `-token-file`，以及在 Go 可用时对 `tailfile-agent -demo` 的真实调用（列目录、文本和 PDF 文本预览、PNG 字节、push、同名冲突后跳过、只读目标、auth key 写入后响应里没有 key）。窗口本身在本机 GTK 上点过：树、`hello.txt` 文本预览、冲突对话框（覆盖 / 跳过 / 对后续冲突都这样处理）、设置里的 demo 网络模式。没有在 Windows 或 macOS 上点过。
+
 ## 此虚拟机没有做的事
 
-没有在 Windows、macOS 或 Hyprland 上逐一点击测试 GUI。Wails server 模式在 Chrome 中针对 `tailfile-agent -demo` 测试过（树、文本、图片、PDF canvas、push、pull、只读粘贴、mkdir、重命名、导入、缓存）。Linux 的 Wails 桌面进程和 MyGo 进程在 Xvfb 下都保持运行，但没有点击其中的控件。这里没有 `TS_AUTHKEY`，也没有本地 tailscaled，因此既没有运行真实的 tsnet 加入，也没有针对真实 tailnet 运行 system 模式。详细情况和二进制大小见 `COMPARISON.md`。
+没有在 Windows、macOS 或 Hyprland 上逐一点击测试 GUI。Wails server 模式在 Chrome 中针对 `tailfile-agent -demo` 测试过（树、文本、图片、PDF canvas、push、pull、只读粘贴、mkdir、重命名、导入、缓存）。Linux 的 Wails 桌面进程和 MyGo 进程在 Xvfb 下都保持运行，但没有点击其中的控件。Native Shell 的 Linux 窗口在本机显示器上点过（见上）。这里没有 `TS_AUTHKEY`，也没有本地 tailscaled，因此既没有运行真实的 tsnet 加入，也没有针对真实 tailnet 运行 system 模式。详细情况和二进制大小见 `COMPARISON.md`。

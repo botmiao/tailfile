@@ -92,3 +92,52 @@ jobs:
         env:
           GOWORK: "off"
         run: CGO_ENABLED=1 go build -o /tmp/tailfile-wails-desktop .
+
+  nsh:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.3"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GTK 4 headers
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-4-dev clang xvfb
+      - name: Test the client and build the Linux window
+        working-directory: gui-nsh
+        run: |
+          cargo test -- --test-threads=8
+          cargo build --release
+      - name: Window stays up against the demo agent
+        run: |
+          (cd agent && GOWORK=off go build -o /tmp/tailfile-agent ./cmd/tailfile-agent)
+          rm -rf /tmp/tf-nsh-ci
+          mkdir -p /tmp/tf-nsh-ci
+          /tmp/tailfile-agent -demo -state /tmp/tf-nsh-ci -listen 127.0.0.1:8645 >/tmp/tf-agent.log 2>&1 &
+          echo $! >/tmp/tf-agent.pid
+          for i in $(seq 1 50); do
+            if [ -s /tmp/tf-nsh-ci/gui-token ]; then
+              break
+            fi
+            sleep 0.1
+          done
+          test -s /tmp/tf-nsh-ci/gui-token
+          set +e
+          xvfb-run -a timeout 8s "$GITHUB_WORKSPACE/gui-nsh/target/release/tailfile-nsh" -agent http://127.0.0.1:8645 -state /tmp/tf-nsh-ci
+          code=$?
+          set -e
+          kill "$(cat /tmp/tf-agent.pid)" || true
+          # timeout exits 124 when the window is still running, which is what we want.
+          test "$code" -eq 124
+
+  nsh-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test and build the Win32 shell
+        working-directory: gui-nsh
+        run: |
+          cargo test -- --test-threads=8
+          cargo build --release
+          if (!(Test-Path .\target\release\tailfile-nsh.exe)) { throw "missing tailfile-nsh.exe" }

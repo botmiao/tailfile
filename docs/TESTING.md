@@ -4,6 +4,24 @@
 
 Windows 上请用 PowerShell，并把下文的 `./tailfile-agent` 换成 `.\tailfile-agent.exe`（构建时用 `go build -o tailfile-agent.exe ./cmd/tailfile-agent`，Go 不会自动加 `.exe`）。`~/Tailfile` 在 Windows 上是 `%USERPROFILE%\Tailfile`（PowerShell：`$HOME\Tailfile`）。
 
+Native Shell 与另外两个 GUI 读同一个 `gui-token`。agent 在第一个终端跑起来之后，在仓库根目录开第二个终端：
+
+```sh
+cd gui-nsh
+cargo build --release
+./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+```
+
+Windows（PowerShell）：
+
+```powershell
+cd gui-nsh
+cargo build --release
+.\target\release\tailfile-nsh.exe -agent http://127.0.0.1:8645
+```
+
+如果 agent 用了 `-state` 或 `-hostname`，这里加上同一个 `-state`。界面是中文。冲突对话框是「目标已有同名文件」「覆盖」「跳过」「对后续冲突都这样处理」。设置里的 auth key 输入框不回显已保存的 key。
+
 下文中的 `<hostname>` 是 `tailfile-` 加上本机主机名，除非你传了 `-hostname`。
 
 ## 状态文件
@@ -96,11 +114,11 @@ Windows（PowerShell）：
 
 在两个节点上（或一个节点加一次本地导入），把文件复制到一个已存在同名、内容不同且已完成的文件的路径上。
 
-- [ ] 传输停在 `conflict`。目标原有字节不变。Wails 和 MyGo 都显示 目标已有同名文件、路径、覆盖、跳过 以及 对后续冲突都这样处理。
+- [ ] 传输停在 `conflict`。目标原有字节不变。Wails、MyGo 和 Native Shell 都显示 目标已有同名文件、路径、覆盖、跳过 以及 对后续冲突都这样处理。
 - [ ] 选择 跳过 后目标不变，任务完成。
 - [ ] 重复一次，选择 覆盖。目标变为源文件的字节。复制过程中旧文件仍是旧字节（新字节在 `*.tailfile-partial` 中，直到哈希校验通过）。
 - [ ] 复制一个包含两个冲突文件的目录。在第一个冲突时勾选 对后续冲突都这样处理 并选择 跳过。第二个会被跳过，且不会再弹出对话框。
-- [ ] 在对话框打开时停止 agent，然后再次启动。任务仍是 `conflict`（而不是 `interrupted`），对话框会重新出现。作答后复制完成。
+- [ ] 在对话框打开时停止 agent，然后再次启动。任务仍是 `conflict`（而不是 `interrupted`），对话框会重新出现。作答后复制完成。Native Shell 在点「刷新」时重新读 `gui-token`；agent 重启后先点刷新，不必为了新 token 单独重启窗口。
 - [ ] 在文件复制到一半时中断，留下一个 meta 与源文件大小和 mtime 一致的 partial，同时在目标处留一个已完成的文件。恢复传输。不会出现对话框，且只有在哈希匹配后才替换已完成的文件。
 - [ ] 从对话框中取消（使用传输的 Cancel 控件，而不是 覆盖 或 跳过）。目标不变。
 
@@ -108,7 +126,7 @@ Windows（PowerShell）：
 
 使用一个可丢弃的 tsnet auth key。不要使用你无法吊销的 key。
 
-- [ ] 两个 GUI 的 Settings 都显示当前网络模式（`system` 或 `tsnet`；当请求的 `-net` 不同时也会显示它）。
+- [ ] 三个 GUI 的 Settings 都显示当前网络模式（`system`、`tsnet` 或 `demo`；当请求的 `-net` 不同时也会显示它）。Native Shell 的文案是「网络模式」。
 - [ ] 保存之前，界面显示未配置 key。`GET /v1/local/settings` 返回 `"authKeyConfigured": false`，且没有 key 字段。
 - [ ] 粘贴 key 并保存。GUI 提示需要重启。响应包含 `configured: true` 和 `restartRequired: true`，且不含 key。磁盘上的 `ts-authkey` 与你粘贴的 key 一致。agent 日志中没有该 key。
 - [ ] 使用 `-net tsnet` 且不设置 `TS_AUTHKEY` 重启。日志说明 key 来自文件，且不打印它。节点加入 tailnet。
