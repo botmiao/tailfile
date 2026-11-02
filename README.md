@@ -1,8 +1,8 @@
 # Tailfile
 
-A short spike: two Finder-style shells over one Tailscale file agent, so you can try them on your own machines and pick a GUI stack. This is not a product. There is no delete, no privilege escalation, and no second pane.
+一个简短的技术验证（spike）：在同一个 Tailscale 文件 agent 之上做了两个 Finder 风格的外壳，方便你在自己的机器上试用，并从中挑选 GUI 技术栈。这不是产品。没有删除功能，没有提权，也没有第二个窗格。
 
-The left pane is a tree. Its roots are the tailnet nodes running the agent, then folders. The right pane is a file list (name, size, modified) and a preview for text, images, and PDF. Copy on node A and paste into a folder on node B. The GUI only tells one agent to push or to pull. The bytes go directly from A to B.
+左侧窗格是一棵树。根节点是运行 agent 的 tailnet 节点，下面是文件夹。右侧窗格是文件列表（名称、大小、修改时间），以及文本、图片和 PDF 的预览。在节点 A 上复制，粘贴到节点 B 的某个文件夹。GUI 只负责让其中一个 agent 推送（push）或拉取（pull），文件字节直接从 A 传到 B。
 
 ```
 gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
@@ -10,20 +10,20 @@ gui-wails / gui-mygo  --localhost-->  local agent  --tailnet-->  peer agent
                                               +---- job: push or pull --+
 ```
 
-## Layout
+## 目录结构
 
-| Path | What it is |
+| 路径 | 说明 |
 | --- | --- |
-| `agent/` | Shared Go module. File API, resumable chunks, copy jobs, system tailscaled or tsnet. |
-| `gui-wails/` | [Wails v3](https://v3.wails.io) shell. React UI, also runnable in a browser (`-tags server`). |
-| `gui-mygo/` | [MyGo](https://mygo.egoist.dev) shell. Native tree, table, and drag-out. |
-| `COMPARISON.md` | What each framework actually did in this spike. |
+| `agent/` | 共享的 Go 模块。文件 API、可续传分块、复制任务、系统 tailscaled 或 tsnet。 |
+| `gui-wails/` | [Wails v3](https://v3.wails.io) 外壳。React UI，也可以在浏览器中运行（`-tags server`）。 |
+| `gui-mygo/` | [MyGo](https://mygo.egoist.dev) 外壳。原生树、表格和拖出。 |
+| `COMPARISON.md` | 两个框架在本次 spike 中的实际表现。 |
 
-Both GUIs talk to the agent at `http://127.0.0.1:8645`. They do not embed a tailnet node of their own. Run one agent per machine. The GUI API is the same whether the agent is using the system tailscaled or an embedded tsnet node.
+两个 GUI 都通过 `http://127.0.0.1:8645` 与 agent 通信。它们自身不内嵌 tailnet 节点。每台机器运行一个 agent。无论 agent 使用的是系统 tailscaled 还是内嵌的 tsnet 节点，GUI API 都相同。
 
-Requires **Go 1.27.3** (MyGo v0.6.4 will not build on older Go). Wails v3.0.0 wants Go 1.26 or newer. The frontend wants Node 22 if you change the Wails UI. `go.work` ties the three modules together.
+需要 **Go 1.27.3**（MyGo v0.6.4 在更旧的 Go 上无法构建）。Wails v3.0.0 要求 Go 1.26 或更新版本。如果要修改 Wails UI，前端需要 Node 22。`go.work` 把三个模块关联在一起。
 
-## Try it with no tailnet
+## 不用 tailnet 先试一下
 
 ```sh
 cd agent
@@ -31,9 +31,11 @@ go build -o tailfile-agent ./cmd/tailfile-agent
 ./tailfile-agent -demo
 ```
 
-`-demo` starts three in-process nodes, `alpha` and `beta` (writable) and `gamma` (read-only), owned by `ada@example.com`. Nothing joins a tailnet. The API is on `http://127.0.0.1:8645`. `-demo` ignores `-net`.
+`-demo` 会在进程内启动三个节点：`alpha` 和 `beta`（可写）以及 `gamma`（只读），所有者为 `ada@example.com`。不会加入任何 tailnet。API 位于 `http://127.0.0.1:8645`。`-demo` 会忽略 `-net`。
 
-Wails in the browser (no GTK, no window):
+agent 在前台运行。下面的 GUI 命令请在另一个终端中、从仓库根目录执行。
+
+在浏览器中运行 Wails（不需要 GTK，没有窗口）：
 
 ```sh
 cd gui-wails
@@ -41,9 +43,9 @@ go build -tags server -o tailfile-wails .
 ./tailfile-wails -agent http://127.0.0.1:8645
 ```
 
-Open [http://127.0.0.1:17431](http://127.0.0.1:17431). Copy `hello.txt` on alpha, open beta, Paste. The transfer line is the command and the progress. The file bytes are not downloaded by the page.
+打开 [http://127.0.0.1:17431](http://127.0.0.1:17431)。在 alpha 上复制 `hello.txt`，打开 beta，粘贴。传输行显示的是命令和进度。页面本身不会下载文件字节。
 
-MyGo:
+MyGo：
 
 ```sh
 cd gui-mygo
@@ -51,7 +53,7 @@ go build -o tailfile-mygo .
 ./tailfile-mygo -agent http://127.0.0.1:8645
 ```
 
-If you change the React UI, rebuild it before the Go binary, because the binary embeds `frontend/dist`:
+如果修改了 React UI，需要先重新构建它，再构建 Go 二进制，因为二进制会内嵌 `frontend/dist`：
 
 ```sh
 cd gui-wails/frontend
@@ -59,19 +61,19 @@ npm ci
 npm run build
 ```
 
-`scripts/build-all.sh` runs the agent tests, the MyGo test, and the cross-compiles below, including linux/arm64 and windows/arm64 for the agent, MyGo, and Wails server mode. Linux desktop stays the host architecture (cgo). Windows desktop arm64 is best-effort, same as windows desktop amd64.
+`scripts/build-all.sh` 会运行 agent 测试、MyGo 测试以及下文的交叉编译，包括 agent、MyGo 和 Wails server 模式的 linux/arm64 与 windows/arm64。Linux 桌面版保持宿主机架构（cgo）。Windows 桌面 arm64 与 Windows 桌面 amd64 一样，只是尽力支持。
 
-## Real tailnet
+## 真实 tailnet
 
-On each machine, pick the folders the agent may read and the folders it may write. With no `-write` list the node is read-only. With no `-read` list the agent creates `~/Tailfile` (mode `0700`) and shares only that directory. Demo mode does not use that default; it shares the temporary fixture directories.
+在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `-write` 列表时节点为只读。没有 `-read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
 
-`-net` chooses how the agent joins the tailnet:
+`-net` 决定 agent 如何加入 tailnet：
 
-| Value | Behavior |
+| 取值 | 行为 |
 | --- | --- |
-| `auto` (default) | If a local tailscaled answers its LocalAPI, is `Running`, and has a Tailscale IP, use system mode. Otherwise embed tsnet. The log says which one and why. |
-| `system` | Use the tailscaled already running on this machine. Do not start a second node. |
-| `tsnet` | Embed a tailscale.com/tsnet node. This is a separate node from the system tailscaled. |
+| `auto`（默认） | 如果本地 tailscaled 响应其 LocalAPI、状态为 `Running` 且有 Tailscale IP，则使用 system 模式，否则内嵌 tsnet。日志会说明选择了哪种以及原因。 |
+| `system` | 使用本机已在运行的 tailscaled。不启动第二个节点。 |
+| `tsnet` | 内嵌一个 tailscale.com/tsnet 节点。它是独立于系统 tailscaled 的另一个节点。 |
 
 ```sh
 # Prefer the machine's own tailscaled. No auth key.
@@ -85,67 +87,69 @@ export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the c
   -write "$HOME/Tailfile"
 ```
 
-`-authkey` exists and prints a warning. Prefer `TS_AUTHKEY` or the Settings screen so the key stays out of shell history and out of the service command. At process start the order is `TS_AUTHKEY`, then `-authkey`, then the file `<state>/ts-authkey`. An empty key makes tsnet print an interactive login URL; open it in a browser. Saving or clearing the key does not restart a node that is already up; restart the agent. The local API returns only whether a key is configured. It never returns the key, and the key is never logged.
+如果给 agent 传了 `-hostname` 或 `-state`，状态目录（以及其中的 `gui-token`）就不在默认位置，启动 GUI 时需要用 `-state`（或 `-token-file`）指向同一个目录。
 
-State lives under the user config directory, `tailfile/<hostname>`, mode `0700`, or wherever `-state` points. Do not commit that directory.
+`-authkey` 参数仍然可用，但会打印警告。建议使用 `TS_AUTHKEY` 或 Settings 界面，这样 key 不会出现在 shell 历史和服务命令中。进程启动时的读取顺序是 `TS_AUTHKEY`，然后是 `-authkey`，最后是文件 `<state>/ts-authkey`。key 为空时，tsnet 会打印一个交互式登录 URL，用浏览器打开即可。保存或清除 key 不会重启已经运行的节点，需要重启 agent。本地 API 只返回是否配置了 key，从不返回 key 本身，key 也从不写入日志。
 
-| OS | State directory |
+状态保存在用户配置目录下的 `tailfile/<hostname>`（权限 `0700`），或 `-state` 指定的位置。不要提交该目录。
+
+| 操作系统 | 状态目录 |
 | --- | --- |
 | Linux | `~/.config/tailfile/<hostname>/` |
 | macOS | `~/Library/Application Support/tailfile/<hostname>/` |
 | Windows | `%AppData%\tailfile\<hostname>\` |
 
-`<hostname>` defaults to `tailfile-` plus the machine's hostname. `gui-token` is rewritten at every start (mode `0600`; on Windows the DACL grants the current user only). `ts-authkey` is the stored auth key, with the same permissions, and is left in place across restarts. `jobs.json`, `transfers.json`, and `service.json` are also mode `0600`. System mode does not create a tailnet node key; `-hostname` only names that state directory. The name other nodes see is the one tailscaled already has.
+`<hostname>` 默认是 `tailfile-` 加上本机主机名。`gui-token` 在每次启动时重写（权限 `0600`；Windows 上 DACL 仅授权给当前用户）。`ts-authkey` 是保存的 auth key，权限相同，重启后保留。`jobs.json`、`transfers.json` 和 `service.json` 的权限也是 `0600`。System 模式不会创建 tailnet 节点密钥；`-hostname` 只用于命名状态目录。其他节点看到的名称是 tailscaled 原有的名称。
 
-System mode listens only on the node's Tailscale IPv4 and IPv6 addresses (`100.64.0.0/10` and `fd7a:115c:a1e0::/48`) on `-port` (8644). It never binds `0.0.0.0`. If those addresses change, or tailscaled restarts, the agent drops the old sockets and binds the new ones. Outgoing calls to other agents are normal OS dials of `100.x` / `fd7a::`, not a userspace stack. The host firewall must allow inbound TCP 8644 on the Tailscale interface (`tailscale0` on Linux). tsnet mode listens inside the process, so the host firewall does not see that port.
+System 模式只在节点的 Tailscale IPv4 和 IPv6 地址（`100.64.0.0/10` 和 `fd7a:115c:a1e0::/48`）上监听 `-port`（8644），从不绑定 `0.0.0.0`。如果这些地址变化或 tailscaled 重启，agent 会丢弃旧 socket 并绑定新地址。对其他 agent 的出站调用是普通的系统拨号，目标为 `100.x` / `fd7a::`，不走用户态网络栈。主机防火墙必须允许 Tailscale 接口（Linux 上为 `tailscale0`）的入站 TCP 8644。tsnet 模式在进程内部监听，因此主机防火墙看不到该端口。
 
-On Linux the LocalAPI socket is often root-only. If system mode (or auto, in the fallback log) says it cannot read tailscaled, run `sudo tailscale set --operator=$USER` and start the agent again as that user. On macOS, auto and system try both the open-source `tailscaled` unix socket and the App Store / standalone app. Those GUI builds publish a LocalAPI port via a `sameuserproof` file (`IPNExtension` for the App Store, `macsys` for the standalone app) instead of only a socket. The stock `tailscale.com/client/local` dialer finds that port; this agent does not set `UseSocketOnly`, so both are tried, GUI first when it is present.
+在 Linux 上，LocalAPI socket 通常只有 root 可访问。如果 system 模式（或 auto 模式的回退日志）提示无法读取 tailscaled，执行 `sudo tailscale set --operator=$USER`，然后以该用户身份重新启动 agent。在 macOS 上，auto 和 system 会同时尝试开源版 `tailscaled` 的 unix socket 以及 App Store / 独立版应用。这些 GUI 版本通过 `sameuserproof` 文件（App Store 版为 `IPNExtension`，独立版为 `macsys`）发布 LocalAPI 端口，而不仅仅是 socket。官方的 `tailscale.com/client/local` 拨号器能找到该端口；本 agent 没有设置 `UseSocketOnly`，因此两者都会尝试，存在 GUI 版时优先使用它。
 
-The agent also listens on localhost at `127.0.0.1:8645` in every mode. The local listener refuses any address that is not `127.0.0.1`, `localhost`, or `::1` (`0.0.0.0:8645` and `:8645` will not start). Do not publish port 8645. The GUI bearer token, origin check, and host check are unchanged.
+无论哪种模式，agent 还会在 localhost 的 `127.0.0.1:8645` 上监听。本地监听器拒绝 `127.0.0.1`、`localhost` 或 `::1` 以外的任何地址（`0.0.0.0:8645` 和 `:8645` 都无法启动）。不要对外公开 8645 端口。GUI bearer token、origin 检查和 host 检查都保持不变。
 
-Every tailnet request is checked with LocalAPI `WhoIs`, whether that LocalAPI belongs to the system tailscaled or to the embedded tsnet node. Until the agent knows its own tailnet user it refuses tailnet calls. After that, only that user is allowed, unless you set `-owner` or `TAILFILE_OWNER` to a different login. In system mode the default owner is the user logged into the local tailscaled. A node whose tailnet user is `tagged-devices`, or whose own peer is tagged, has no human owner. The process exits with an error unless `-owner` or `TAILFILE_OWNER` is set.
+每个 tailnet 请求都会通过 LocalAPI `WhoIs` 检查，无论该 LocalAPI 属于系统 tailscaled 还是内嵌的 tsnet 节点。在 agent 知道自己的 tailnet 用户之前，它会拒绝 tailnet 调用。之后只允许该用户访问，除非你通过 `-owner` 或 `TAILFILE_OWNER` 指定其他登录名。System 模式下默认所有者是本地 tailscaled 已登录的用户。tailnet 用户为 `tagged-devices` 的节点，或自身 peer 带有 tag 的节点，没有人类所有者；此时除非设置了 `-owner` 或 `TAILFILE_OWNER`，否则进程会报错退出。
 
-Tailscale grants can narrow (and share) access. If WhoIs `CapMap` contains `iori.dev/cap/tailfile`, that grant is enforced and the same-user check is not required. Each value is JSON:
+Tailscale grants 可以收窄（以及共享）访问权限。如果 WhoIs 的 `CapMap` 包含 `iori.dev/cap/tailfile`，则强制执行该 grant，不再要求同一用户检查。每个值都是 JSON：
 
 ```json
 {"read": ["/home/ada/Tailfile"], "write": ["/home/ada/Tailfile/inbox"]}
 ```
 
-A grant path is intersected with this node's `-read` and `-write` lists. A path outside those lists is dropped, so a grant cannot widen what the node shares. A grant wider than a configured root keeps the configured root. A missing capability falls back to the same-user rule. A capability that is present but empty, or that is not valid JSON, fails closed.
+grant 中的路径会与本节点的 `-read` 和 `-write` 列表取交集。列表之外的路径会被丢弃，因此 grant 无法扩大节点的共享范围。比已配置根目录更宽的 grant 会保留已配置的根目录。没有该 capability 时回退到同一用户规则。capability 存在但为空，或不是合法 JSON 时，一律拒绝（fail closed）。
 
-The localhost API is the only place that can import, cache, or reveal a path. It does not use WhoIs. It requires a bearer token generated at each agent start (32 random bytes, hex), written mode `0600` to `<state dir>/gui-token`. The log line names that path and does not print the token. Both GUIs read the same file (or `-token-file` / `-state`). Wails injects it into `index.html` as `window.TAILFILE_TOKEN` and marks the page `no-store`, because the browser cannot read the file itself. MyGo sends `Origin: mygo://tailfile`. Requests must present `Authorization: Bearer …`. `Host` must be loopback, which blocks a DNS-rebinding name that points at 127.0.0.1. `Access-Control-Allow-Origin: *` is not set. A browser `Origin` is reflected only when it is the Wails server (`http://127.0.0.1:17431`, `localhost`, or `[::1]`, port 17431), a `wails://` desktop page, `http://wails.localhost`, or `mygo://tailfile`. An empty `Origin` is allowed together with the bearer (MyGo, curl, tests). Preflight `OPTIONS` does not require the bearer. Putting the token in the loopback Wails page does not stop another OS user who can already connect to `127.0.0.1:17431`; the `0600` file stops other users from reading the token off disk.
+localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。两个 GUI 读取同一个文件（或通过 `-token-file` / `-state` 指定）。Wails 会把它作为 `window.TAILFILE_TOKEN` 注入 `index.html`，并把页面标记为 `no-store`，因为浏览器自己无法读取该文件。MyGo 发送 `Origin: mygo://tailfile`。请求必须带 `Authorization: Bearer …`。`Host` 必须是回环地址，这样可以拦截指向 127.0.0.1 的 DNS rebinding 域名。不设置 `Access-Control-Allow-Origin: *`。只有当浏览器 `Origin` 是 Wails server（`http://127.0.0.1:17431`、`localhost` 或 `[::1]`，端口 17431）、`wails://` 桌面页面、`http://wails.localhost` 或 `mygo://tailfile` 时才会回显。空 `Origin` 配合 bearer 是允许的（MyGo、curl、测试）。预检 `OPTIONS` 不需要 bearer。把 token 放进回环地址上的 Wails 页面，无法阻止已经能连接 `127.0.0.1:17431` 的其他系统用户；`0600` 文件权限可以阻止其他用户从磁盘读取 token。
 
-Settings are local-only. `GET /v1/local/settings` returns the resolved net mode (`system`, `tsnet`, or `demo`), the `-net` value that was requested, and `authKeyConfigured`. `PUT /v1/local/settings/authkey` with `{"authKey":"..."}` writes `<state>/ts-authkey`. `DELETE /v1/local/settings/authkey` removes it. Both write responses set `restartRequired` and do not echo the key. The tailnet listener does not serve these routes.
+Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式（`system`、`tsnet` 或 `demo`）、请求的 `-net` 值以及 `authKeyConfigured`。`PUT /v1/local/settings/authkey` 携带 `{"authKey":"..."}` 会写入 `<state>/ts-authkey`。`DELETE /v1/local/settings/authkey` 会删除它。这两个写操作的响应都会设置 `restartRequired`，且不回显 key。tailnet 监听器不提供这些路由。
 
-`/v1/local/import` only accepts OS paths inside the read roots, including after symlink resolution. A path outside those roots is rejected. In demo mode the read roots are the fixture directories, so an import of `/tmp/...` fails. On a real agent, pass `-read` for every directory you want to import from.
+`/v1/local/import` 只接受位于读取根目录内的系统路径（包括解析符号链接之后）。根目录以外的路径会被拒绝。Demo 模式下读取根目录是测试数据目录，因此导入 `/tmp/...` 会失败。在真实 agent 上，需要为每个想导入的目录传入 `-read`。
 
-Copy is a job on one of the two nodes. **Push** means the source reads its disk and writes the destination. **Pull** means the destination reads the source and writes its disk. Chunks are 1 MiB, each with its own SHA-256. The partial (`*.tailfile-partial`) and its meta (`*.tailfile-meta`, mode `0600`) record the source size, the source mtime, and, at finish, the whole-file SHA-256. Finish deletes the partial if that hash does not match. If a later resume sees a different source size or mtime, that file starts over.
+复制是两个节点之一上的一个任务（job）。**Push** 表示源端读取自己的磁盘并写入目标端。**Pull** 表示目标端读取源端并写入自己的磁盘。分块大小为 1 MiB，每块有各自的 SHA-256。partial 文件（`*.tailfile-partial`）及其 meta（`*.tailfile-meta`，权限 `0600`）记录源文件大小、源文件 mtime，以及完成时的整文件 SHA-256。完成时如果该哈希不匹配，就删除 partial。之后续传时如果发现源文件大小或 mtime 变了，该文件会从头开始。
 
-When the destination path already exists and is a file, the job pauses with status `conflict`. Both GUIs ask 覆盖 (overwrite) or 跳过 (skip). The checkbox 对后续冲突都这样处理 stores that choice as the policy for later files in the same job. A file is never replaced without an explicit choice. Overwrite writes the new bytes to the partial and renames that partial onto the destination only after the whole-file SHA-256 matches. A bad hash deletes the partial and leaves the old file. A partial whose meta still matches this source's size and mtime resumes with no prompt, including an overwrite that was interrupted while the old destination was still in place. A destination that is a directory is an error, not a prompt. The pending conflict, the per-file choices, and the apply-to-rest policy are stored in `jobs.json`, so they survive a restart. Answer with `POST /v1/transfers/{id}/conflict` (a push or pull the GUI started) or `POST /v1/jobs/{id}/conflict` (a local import job):
+当目标路径已存在且是文件时，任务暂停，状态为 `conflict`。两个 GUI 都会询问 覆盖（overwrite）或 跳过（skip）。勾选 对后续冲突都这样处理 会把该选择保存为同一任务中后续文件的策略。没有明确选择时绝不替换文件。覆盖会把新字节写入 partial，只有在整文件 SHA-256 匹配后才把 partial 重命名到目标位置。哈希不对会删除 partial 并保留旧文件。meta 仍与当前源文件大小和 mtime 一致的 partial 会直接续传而不提示，包括旧目标文件还在时被中断的覆盖。目标是目录时报错，而不是提示。待处理的冲突、逐文件选择和"应用到后续"策略都保存在 `jobs.json` 中，因此重启后仍然有效。通过 `POST /v1/transfers/{id}/conflict`（GUI 发起的 push 或 pull）或 `POST /v1/jobs/{id}/conflict`（本地导入任务）作答：
 
 ```json
 {"action": "overwrite", "applyToRest": false}
 ```
 
-`action` is `overwrite` or `skip`. Job and transfer records are `jobs.json` and `transfers.json` (mode `0600`) in the state directory, so Resume still works after the agent process restarts. A job that was running at shutdown comes back as `interrupted`. A job that was waiting on a conflict stays `conflict`; Resume on that job is refused until the dialog is answered. Delete is not implemented.
+`action` 为 `overwrite` 或 `skip`。任务和传输记录保存在状态目录的 `jobs.json` 和 `transfers.json`（权限 `0600`）中，因此 agent 进程重启后 Resume 仍然可用。关闭时正在运行的任务会以 `interrupted` 状态恢复。正在等待冲突处理的任务保持 `conflict`；在对话框作答之前，对该任务的 Resume 会被拒绝。删除功能未实现。
 
-The node does not escalate. It cannot sudo, and it does not show a UAC prompt. It only sees the files the user who launched it can see.
+节点不会提权。它不能 sudo，也不会弹出 UAC 提示。它只能看到启动它的用户能看到的文件。
 
-## Per-user service
+## 按用户安装的服务
 
 ```sh
 tailfile-agent service install|uninstall|start|stop|status [flags]
 ```
 
-This installs a service for the current user only. It does not ask for root or an administrator. `--system` is rejected. A machine-wide unit is left for a later, separate installer (see the TODO on `ErrUserServiceOnly` in `agent/service.go`). That path must not reuse the per-user unit, plist, or logon task. To change which account owns the service, uninstall, then install again while logged in as the other user. Installing while a service is already present also fails, so changing `-net`, `-read`, `-write`, or `-hostname` is the same two steps.
+这只为当前用户安装服务，不需要 root 或管理员。`--system` 会被拒绝。全机范围的 unit 留给以后单独的安装程序（见 `agent/service.go` 中 `ErrUserServiceOnly` 上的 TODO），那条路径不得复用按用户安装的 unit、plist 或登录任务。要更换服务所属的账户，先卸载，再以另一个用户登录后重新安装。已有服务时再次安装也会失败，因此修改 `-net`、`-read`、`-write` 或 `-hostname` 同样需要这两步。
 
-The flags you pass are written into the service command and into `<state>/service.json` (`scope` is `"user"`, mode `0600`). That file has no secrets. If you omit them, install also records the resolved `-hostname`, `-state`, `-net`, and the default `-read` (`~/Tailfile`, mode `0700`) so a later change of the machine hostname does not point the service at a new state directory. `-authkey` is stored in `ts-authkey` and omitted from the unit, the plist, the task, and `service.json`. A service process does not inherit `TS_AUTHKEY` from the shell that ran `install`. Set that variable in the service environment yourself if it should win over the file.
+你传入的参数会写入服务命令和 `<state>/service.json`（`scope` 为 `"user"`，权限 `0600`）。该文件不含任何密钥。如果省略了这些参数，安装时还会记录解析后的 `-hostname`、`-state`、`-net` 以及默认的 `-read`（`~/Tailfile`，权限 `0700`），这样以后机器主机名变化时服务也不会指向新的状态目录。`-authkey` 会保存到 `ts-authkey`，不会写入 unit、plist、任务或 `service.json`。服务进程不会继承执行 `install` 的 shell 中的 `TS_AUTHKEY`。如果希望它优先于文件，需要自己在服务环境中设置该变量。
 
-Install registers the service and does not start the process in this session. `service start` does. On Linux and Windows that registration also starts the agent at the next logon of this user. On macOS, logon start begins only after `service start` has loaded the plist.
+安装只注册服务，不会在当前会话中启动进程，`service start` 才会启动。在 Linux 和 Windows 上，注册后该用户下次登录时也会启动 agent。在 macOS 上，只有在 `service start` 加载 plist 之后，登录时才会启动。
 
 ### Linux
 
-User unit `~/.config/systemd/user/tailfile-agent.service`. Install runs `systemctl --user enable` and a daemon-reload. The unit is wanted by `default.target` and restarts on failure. It is not a system unit and it does not read `/etc/sysconfig`. It starts at the next login of this user. To keep the user manager, and therefore the agent, running with nobody logged in:
+用户 unit 为 `~/.config/systemd/user/tailfile-agent.service`。安装会执行 `systemctl --user enable` 和 daemon-reload。该 unit 由 `default.target` 拉起（wanted by），失败时自动重启。它不是系统 unit，也不读取 `/etc/sysconfig`。它在该用户下次登录时启动。如果希望在没有人登录时也保持用户管理器（以及 agent）运行：
 
 ```sh
 loginctl enable-linger "$USER"
@@ -153,11 +157,11 @@ loginctl enable-linger "$USER"
 
 ### macOS
 
-LaunchAgent `~/Library/LaunchAgents/tailfile-agent.plist`, with `RunAtLoad`. There is no LaunchDaemon and no `sudo`. Install only writes the plist. `service start` runs `launchctl load`, which starts the agent now and again at later logins. `service stop` unloads the plist, so it stays unloaded until the next `service start`.
+LaunchAgent 为 `~/Library/LaunchAgents/tailfile-agent.plist`，带 `RunAtLoad`。没有 LaunchDaemon，也不需要 `sudo`。安装只写入 plist。`service start` 执行 `launchctl load`，会立即启动 agent，并在以后登录时再次启动。`service stop` 会卸载 plist，在下次 `service start` 之前保持卸载状态。
 
 ### Windows
 
-`kardianos/service` on Windows installs through the Service Control Manager, which needs an administrator. Its `UserService` option is documented for POSIX only, so this build does not call that library on Windows. It registers a Task Scheduler logon task named `TailfileAgent` (`schtasks /Create /XML`) for the user who runs install: `RunLevel` LeastPrivilege, an interactive logon trigger, and no execution time limit. An `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` value would also avoid elevation, but it cannot start, stop, or report status. The task can, via `schtasks /Run`, `/End`, and `/Query`. The task runs when that user logs on. It is not a Windows service and it does not show a UAC prompt.
+Windows 上的 `kardianos/service` 通过服务控制管理器（Service Control Manager）安装，需要管理员权限。它的 `UserService` 选项文档中仅支持 POSIX，因此本构建在 Windows 上不调用该库，而是为执行安装的用户注册一个名为 `TailfileAgent` 的 Task Scheduler 登录任务（`schtasks /Create /XML`）：`RunLevel` 为 LeastPrivilege，交互式登录触发器，无执行时间限制。`HKCU\Software\Microsoft\Windows\CurrentVersion\Run` 值同样无需提权，但无法启动、停止或查询状态；任务则可以通过 `schtasks /Run`、`/End` 和 `/Query` 做到。该任务在该用户登录时运行。它不是 Windows 服务，也不会弹出 UAC 提示。
 
 ```sh
 ./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
@@ -165,28 +169,28 @@ LaunchAgent `~/Library/LaunchAgents/tailfile-agent.plist`, with `RunAtLoad`. The
 ./tailfile-agent service start
 ```
 
-## Build per OS
+## 各操作系统的构建
 
-The same `go build` lines work on each OS once Go 1.27.3 is installed. Cross-compile results from the Linux VM that produced this repo are in `COMPARISON.md`. A compile is not a substitute for running the window.
+安装 Go 1.27.3 后，同样的 `go build` 命令在各操作系统上都可用。生成本仓库的 Linux 虚拟机上的交叉编译结果见 `COMPARISON.md`。能编译通过不代表窗口能正常运行。
 
 ### Windows
 
-- Go 1.27.3 from [go.dev](https://go.dev/dl/), Node 22 only if you rebuild the Wails frontend.
-- Wails desktop uses WebView2, which current Windows 11 already has. The Windows desktop binary can be cross-compiled from Linux with `CGO_ENABLED=0`; it was not run here.
-- MyGo and the agent are `CGO_ENABLED=0` builds.
-- Run `tailfile-agent` first, then `tailfile-wails` or `tailfile-mygo`.
+- 从 [go.dev](https://go.dev/dl/) 安装 Go 1.27.3；只有重新构建 Wails 前端时才需要 Node 22。
+- Wails 桌面版使用 WebView2，当前的 Windows 11 已自带。Windows 桌面二进制可以在 Linux 上用 `CGO_ENABLED=0` 交叉编译，但未在此运行过。
+- MyGo 和 agent 都是 `CGO_ENABLED=0` 构建。
+- 先运行 `tailfile-agent`，再运行 `tailfile-wails` 或 `tailfile-mygo`。
 
 ### macOS
 
-- Go 1.27.3, and Xcode command-line tools for the Wails desktop binary (it is cgo: Cocoa and WebKit).
-- A Linux machine cannot produce the Wails desktop binary. `clang` rejects `-arch` when `GOOS=darwin`. Build it on a Mac:
+- Go 1.27.3，以及构建 Wails 桌面二进制所需的 Xcode 命令行工具（它使用 cgo：Cocoa 和 WebKit）。
+- Linux 机器无法生成 Wails 桌面二进制。`GOOS=darwin` 时 `clang` 会拒绝 `-arch`。请在 Mac 上构建：
 
   ```sh
   cd gui-wails && go build -o tailfile-wails .
   ```
 
-- The agent, MyGo, and Wails **server** mode (`-tags server`) do cross-compile to darwin amd64 and arm64. Server mode is a browser UI, not a Mac window.
-- MyGo's drag-out uses a native file drag of a path that already exists on disk.
+- agent、MyGo 和 Wails **server** 模式（`-tags server`）可以交叉编译到 darwin amd64 和 arm64。server 模式是浏览器 UI，不是 Mac 窗口。
+- MyGo 的拖出使用原生文件拖拽，拖的是磁盘上已存在的路径。
 
 ### Ubuntu
 
@@ -197,9 +201,9 @@ sudo apt install libgtk-3-0
 cd gui-wails && go build -o tailfile-wails .
 ```
 
-Wails defaults to GTK 4 and WebKitGTK 6.0. If you only have WebKit2GTK 4.1, build with `-tags gtk3`.
+Wails 默认使用 GTK 4 和 WebKitGTK 6.0。如果只有 WebKit2GTK 4.1，请用 `-tags gtk3` 构建。
 
-### Arch / Omarchy (Hyprland, Wayland)
+### Arch / Omarchy（Hyprland，Wayland）
 
 ```sh
 sudo pacman -S --needed base-devel gtk4 webkitgtk-6.0 pkgconf
@@ -207,56 +211,58 @@ sudo pacman -S --needed base-devel gtk4 webkitgtk-6.0 pkgconf
 sudo pacman -S --needed gtk3
 ```
 
-WebKitGTK on Hyprland often paints a blank view until compositing is turned down. Set this for the Wails desktop process and for MyGo when a PDF is shown in its web view:
+在 Hyprland 上，WebKitGTK 常常显示空白视图，直到降低合成（compositing）设置。请为 Wails 桌面进程设置以下变量；MyGo 在其 web view 中显示 PDF 时也要设置：
 
 ```sh
 export WEBKIT_DISABLE_DMABUF_RENDERER=1
 ./tailfile-wails
 ```
 
-If the window is still blank, also try `GDK_BACKEND=x11` under XWayland. That was not tested on Hyprland from this VM.
+如果窗口仍然空白，还可以在 XWayland 下尝试 `GDK_BACKEND=x11`。这一点没有在此虚拟机上针对 Hyprland 测试过。
 
-## Dragging files to the OS file manager
+## 把文件拖到系统文件管理器
 
-Both shells can download a file into a local cache (`POST /v1/local/cache`) and then reveal it (`POST /v1/local/reveal`: Finder on macOS, Explorer on Windows, `xdg-open` of the parent directory on Linux). The cache is `os.UserCacheDir()/tailfile` (mode `0700`), not the state directory. Each file is mode `0600` and named from a hash of the node id plus the remote path, so two `note.txt` files do not overwrite each other.
+两个外壳都可以把文件下载到本地缓存（`POST /v1/local/cache`），然后显示它（`POST /v1/local/reveal`：macOS 上用 Finder，Windows 上用资源管理器，Linux 上对父目录执行 `xdg-open`）。缓存位于 `os.UserCacheDir()/tailfile`（权限 `0700`），而不是状态目录。每个文件权限为 `0600`，文件名由节点 id 加远程路径的哈希生成，因此两个 `note.txt` 不会互相覆盖。
 
-MyGo can then drag that cached path out with `transfer.FileData`. The path has to exist already. There is no promised-file drag.
+之后 MyGo 可以用 `transfer.FileData` 把该缓存路径拖出去。该路径必须已经存在，不支持 promised-file 拖拽。
 
-Wails v3 can accept a drop **onto** the window (`EnableFileDrop`, elements with `data-file-drop-target`). No Wails API was found that starts a drag of a local path out to Explorer or Finder. The Wails UI shows the cached path so you can copy it, and Reveal opens it. The browser build (`-tags server`) cannot see OS paths on a drop, so it also has a "local path to import" field. MyGo has the same field plus a native drop onto the file list.
+Wails v3 可以接受拖放**到**窗口上（`EnableFileDrop`，带 `data-file-drop-target` 的元素）。没有找到能把本地路径拖出到资源管理器或 Finder 的 Wails API。Wails UI 会显示缓存路径供你复制，Reveal 会打开它。浏览器版（`-tags server`）在拖放时看不到系统路径，所以它还有一个"要导入的本地路径"输入框。MyGo 也有同样的输入框，另外支持原生拖放到文件列表。
 
-## sing-box (TUN) and Tailscale
+## sing-box（TUN）与 Tailscale
 
-**System mode** uses the kernel (or the tailscaled userspace) route that already exists. Packets to `100.64.0.0/10` and `fd7a:115c:a1e0::/48` are visible to a TUN stack such as sing-box. Those prefixes must be **direct**, or the agent cannot reach its peers and peers cannot reach port 8644. You do not need a process-direct rule for the agent itself unless the TUN also captures its LocalAPI socket or the GUI's localhost calls.
+**System 模式**使用已有的内核（或 tailscaled 用户态）路由。发往 `100.64.0.0/10` 和 `fd7a:115c:a1e0::/48` 的数据包对 sing-box 这类 TUN 栈是可见的。这些网段必须设为 **direct**（直连），否则 agent 无法访问 peer，peer 也无法访问 8644 端口。除非 TUN 也截获了 agent 的 LocalAPI socket 或 GUI 的 localhost 调用，否则不需要为 agent 本身设置进程直连规则。
 
-**tsnet mode** does not install a kernel route. Its data plane for those prefixes stays inside the process (gVisor). sing-box never sees those packets from the agent. What the host does see is the control connection (HTTPS to Tailscale) and DERP (UDP). If the agent process is captured by the TUN, those are the flows that break, and the node looks offline. Put `tailfile-agent` in sing-box **direct**, and still send the Tailscale prefixes direct so the system `tailscaled` and `tailscale ping` keep working:
+**tsnet 模式**不会安装内核路由。这些网段的数据面留在进程内部（gVisor）。sing-box 永远看不到来自 agent 的这些数据包。主机能看到的是控制连接（到 Tailscale 的 HTTPS）和 DERP（UDP）。如果 agent 进程被 TUN 截获，断掉的就是这些流量，节点会显示离线。请把 `tailfile-agent` 设为 sing-box **direct**，同时仍让 Tailscale 网段直连，以保证系统 `tailscaled` 和 `tailscale ping` 正常工作：
 
 - `100.64.0.0/10`
 - `fd7a:115c:a1e0::/48`
-- process direct for `tailfile-agent` when `-net tsnet` (and for the GUIs if localhost is being captured)
+- `-net tsnet` 时为 `tailfile-agent` 设置进程直连（如果 localhost 被截获，GUI 也要设置）
 
-Check from the system tailscale:
+从系统 tailscale 检查：
 
 ```sh
 tailscale ping my-laptop
 ```
 
-In tsnet mode that hostname is the `-hostname` you gave the agent, and it is a different node from the system tailscaled. In system mode, ping the machine's existing MagicDNS name; the agent is not its own node. A pong means the system tailnet can reach that name. `via DERP` on every ping means the direct path is not up; the copy can still work, it will just hairpin through DERP. `tailscale ping` does not by itself prove a tsnet agent's userspace stack is bypassing the TUN. If ping works and a tsnet agent still cannot stay logged in, the process rule is the one that is missing.
+在 tsnet 模式下，该主机名就是你给 agent 的 `-hostname`，它和系统 tailscaled 是不同的节点。在 system 模式下，ping 本机已有的 MagicDNS 名称；agent 不是独立节点。收到 pong 说明系统 tailnet 能访问该名称。如果每次 ping 都显示 `via DERP`，说明直连路径没有建立；复制仍可工作，只是会经由 DERP 中转。`tailscale ping` 本身不能证明 tsnet agent 的用户态栈绕过了 TUN。如果 ping 正常而 tsnet agent 仍然无法保持登录，缺的就是进程规则。
 
-## Tests
+## 测试
+
+下面两条命令都从仓库根目录执行（分别执行，第二条不要在 `agent/` 目录中运行）：
 
 ```sh
 cd agent && go test -count=1 -race .
 cd gui-mygo && go test -count=1 .
 ```
 
-The agent tests cover listing, symlink escape, range reads, a bad chunk hash, resume, same-user auth, push and pull where a counting transport shows the bytes on the runner rather than on the orchestrator, cancel plus resume, a directory copy, and a read-only destination. The hardening tests are `TestLocalRequiresTokenAndLoopbackHost`, `TestImportRespectsReadRoots`, `TestDefaultReadRootIsTailfile`, `TestListenRejectsNonLoopback`, `TestResolveOwnerTaggedDevice`, `TestGrantNarrowsRoots`, `TestFinishRejectsBadSHA256`, `TestResumeRestartsWhenSourceChanges`, `TestJobListSurvivesRestart`, and `TestCacheKeySeparatesSameNames`. System-tailscaled mode is covered by `TestNetAutoSelectsSystem`, `TestNetAutoFallsBackToTsnet`, `TestNetSystemRequiresRunningTailscaled`, `TestNetSystemPermissionError`, `TestSystemWhoIsAuth`, `TestTailListenAddrsRejectsNonTailscale`, `TestSystemRebindOnIPChange`, `TestSystemNodeListFromStatus`, and `TestProbeSystemTailscaledReturns`. A same-name destination is covered by `TestExistingFilePromptsAndOverwriteIsAtomic`, `TestExistingFileSkipLeavesIt`, `TestConflictApplyToRestSkipsTheNextFile`, `TestPartialSameSourceResumesWithoutPrompt`, `TestOverwriteRenamesOnlyAfterHash`, `TestConflictSurvivesRestart`, and `TestAnswerWithoutChoiceDoesNotOverwrite`. The auth-key file is covered by `TestAuthKeyAPIStoresAndDoesNotEcho` and `TestAuthKeyRejectsEmptyAndMultiline`. The per-user service plan is covered by `TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem`, `TestStableServiceArgsAndConfig`, `TestWindowsLogonTaskDoesNotElevate`, `TestServicePlanStoresAuthKeyOutsideTheUnit`, and `TestUserSystemdUnitIsPerUser`. Those tests check the unit text and the task XML. They do not call `systemctl`, `launchctl`, or `schtasks`. All of the above use an in-process loopback harness or a fake LocalAPI, not a live tailnet and not tsnet's integration control plane. Default tests do not phone home.
+agent 测试覆盖：列目录、符号链接逃逸、范围读取、错误的分块哈希、续传、同一用户鉴权、push 与 pull（通过计数传输层证明字节流经执行方而不是编排方）、取消后续传、目录复制以及只读目标。加固相关测试为 `TestLocalRequiresTokenAndLoopbackHost`、`TestImportRespectsReadRoots`、`TestDefaultReadRootIsTailfile`、`TestListenRejectsNonLoopback`、`TestResolveOwnerTaggedDevice`、`TestGrantNarrowsRoots`、`TestFinishRejectsBadSHA256`、`TestResumeRestartsWhenSourceChanges`、`TestJobListSurvivesRestart` 和 `TestCacheKeySeparatesSameNames`。系统 tailscaled 模式由 `TestNetAutoSelectsSystem`、`TestNetAutoFallsBackToTsnet`、`TestNetSystemRequiresRunningTailscaled`、`TestNetSystemPermissionError`、`TestSystemWhoIsAuth`、`TestTailListenAddrsRejectsNonTailscale`、`TestSystemRebindOnIPChange`、`TestSystemNodeListFromStatus` 和 `TestProbeSystemTailscaledReturns` 覆盖。同名目标由 `TestExistingFilePromptsAndOverwriteIsAtomic`、`TestExistingFileSkipLeavesIt`、`TestConflictApplyToRestSkipsTheNextFile`、`TestPartialSameSourceResumesWithoutPrompt`、`TestOverwriteRenamesOnlyAfterHash`、`TestConflictSurvivesRestart` 和 `TestAnswerWithoutChoiceDoesNotOverwrite` 覆盖。auth key 文件由 `TestAuthKeyAPIStoresAndDoesNotEcho` 和 `TestAuthKeyRejectsEmptyAndMultiline` 覆盖。按用户服务的方案由 `TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem`、`TestStableServiceArgsAndConfig`、`TestWindowsLogonTaskDoesNotElevate`、`TestServicePlanStoresAuthKeyOutsideTheUnit` 和 `TestUserSystemdUnitIsPerUser` 覆盖。这些测试检查 unit 文本和任务 XML，不调用 `systemctl`、`launchctl` 或 `schtasks`。以上所有测试都使用进程内回环测试环境或伪造的 LocalAPI，而不是真实 tailnet，也不是 tsnet 的集成控制平面。默认测试不会联网回报。
 
-A manual pass for system mode, the on-disk token and auth key, `~/Tailfile`, service install, the conflict dialog, and the Settings screen is in `docs/TESTING.md`.
+针对 system 模式、磁盘上的 token 和 auth key、`~/Tailfile`、服务安装、冲突对话框以及 Settings 界面的手动测试步骤见 [docs/TESTING.md](docs/TESTING.md)。
 
-Both GUIs show a preview when you select a file. Each has a persisted Preview on / Preview off control (default on). Wails stores it in `localStorage` under `tailfile.preview`. MyGo stores `0` or `1` in `UserConfigDir/tailfile/mygo-preview` (mode `0600`). Image and PDF bytes are fetched with the bearer token. An `<img src>` or a PDF.js URL would not send `Authorization`.
+选中文件时，两个 GUI 都会显示预览。各自有一个会持久保存的 Preview on / Preview off 开关（默认开启）。Wails 将其保存在 `localStorage` 的 `tailfile.preview` 下。MyGo 在 `UserConfigDir/tailfile/mygo-preview`（权限 `0600`）中保存 `0` 或 `1`。图片和 PDF 字节通过 bearer token 获取，因为 `<img src>` 或 PDF.js URL 不会发送 `Authorization`。
 
-MyGo's test builds the window with `ui.NewTester` and clicks Copy and Paste. `TestConflictAndSettingsDialogs` checks the conflict dialog (覆盖, 跳过, 对后续冲突都这样处理) and a settings view that shows the net mode. It does not open a display.
+MyGo 的测试用 `ui.NewTester` 构建窗口，并点击 Copy 和 Paste。`TestConflictAndSettingsDialogs` 检查冲突对话框（覆盖、跳过、对后续冲突都这样处理）以及显示网络模式的设置视图。它不会打开显示器。
 
-## What this VM did not do
+## 此虚拟机没有做的事
 
-The GUI was not clicked through on Windows, macOS, or Hyprland. Wails server mode was exercised in Chrome against `tailfile-agent -demo` (tree, text, image, PDF canvas, push, pull, read-only paste, mkdir, rename, import, cache). The Linux Wails desktop process and the MyGo process both stayed up under Xvfb; their widgets were not clicked. There is no `TS_AUTHKEY` and no local tailscaled here, so neither a real tsnet join nor system mode against a live tailnet was run. Details and binary sizes are in `COMPARISON.md`.
+没有在 Windows、macOS 或 Hyprland 上逐一点击测试 GUI。Wails server 模式在 Chrome 中针对 `tailfile-agent -demo` 测试过（树、文本、图片、PDF canvas、push、pull、只读粘贴、mkdir、重命名、导入、缓存）。Linux 的 Wails 桌面进程和 MyGo 进程在 Xvfb 下都保持运行，但没有点击其中的控件。这里没有 `TS_AUTHKEY`，也没有本地 tailscaled，因此既没有运行真实的 tsnet 加入，也没有针对真实 tailnet 运行 system 模式。详细情况和二进制大小见 `COMPARISON.md`。
