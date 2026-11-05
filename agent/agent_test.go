@@ -225,9 +225,15 @@ func TestPushCopyIsDirect(t *testing.T) {
 		t.Fatal(err)
 	}
 	lb := newPair(t, a, b, 1000)
+	// Model a slow runner. The console's byte count must not depend on how long the copy takes.
+	lb.lb.Node("alpha").jobs.hooks.AfterChunk = func(int) { time.Sleep(15 * time.Millisecond) }
 	tr := mustTransfer(t, lb, TransferRequest{
 		Mode: "push", FromNode: "alpha", FromPath: src, ToNode: "beta", ToPath: dst,
 	})
+	// Polling the console would add a job-status response to its byte count every
+	// 15ms, so a slow copy looked like a relayed one. Wait on the runner instead,
+	// then check the console view once.
+	waitRunnerJob(t, lb, tr, jobCompleted)
 	waitTransfer(t, lb.client, tr.ID, jobCompleted)
 	got, err := os.ReadFile(dst)
 	if err != nil {
@@ -478,6 +484,34 @@ func waitTransfer(t *testing.T, c *Client, id string, want ...string) Transfer {
 		time.Sleep(15 * time.Millisecond)
 	}
 	t.Fatalf("transfer %s stuck at %s (%s), want %v", id, last.Job.Status, last.Job.Error, want)
+	return last
+}
+
+// waitRunnerJob waits on the runner node's job directly, without traffic through the console.
+func waitRunnerJob(t *testing.T, p pair, tr Transfer, want string) Job {
+	t.Helper()
+	node := p.lb.Node(tr.RunnerNode)
+	if node == nil {
+		t.Fatalf("unknown runner %q", tr.RunnerNode)
+	}
+	deadline := time.Now().Add(8 * time.Second)
+	var last Job
+	for time.Now().Before(deadline) {
+		job, err := node.jobs.get(tr.Job.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = job
+		if job.Status == want {
+			return job
+		}
+		switch job.Status {
+		case jobError, jobCanceled, jobCompleted, jobConflict:
+			t.Fatalf("job %s stuck at %s (%s), want %s", job.ID, job.Status, job.Error, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("job %s stuck at %s (%s), want %s", last.ID, last.Status, last.Error, want)
 	return last
 }
 
