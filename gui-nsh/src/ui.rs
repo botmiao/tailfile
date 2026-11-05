@@ -1,18 +1,16 @@
-//! Single-pane Finder layout: node tree on the left, files and preview on
-//! the right. Labels are Chinese, including the same conflict wording as
-//! the other shells (覆盖 / 跳过 / 对后续冲突都这样处理).
+//! Prototype-matching Finder layout: clean header, tabs, node tree,
+//! single action toolbar, breadcrumb controls, list/grid, right details.
 
 use nsh_base::{button, checkbox, dialog, input, theme};
-use crate::icons;
+use crate::icons::{self, path as ip};
 use crate::persist::ThemePref;
 use nsh_core::prelude::*;
 use nsh_core::{ContextMenuEvent, EventKind, EventPayload, PressEvent};
 
-use crate::api::{self, job_line, mode_label, size_label};
+use crate::api::{self, job_line, size_label};
 use crate::model::{self, TreeRow, Ui};
 use crate::token::format_time;
 
-/// The window root (`nsh.json` `"root": "ui::App"`).
 #[component]
 pub fn App() -> impl IntoElement {
     let state = signal(Ui::new());
@@ -21,9 +19,8 @@ pub fn App() -> impl IntoElement {
         .flex_1()
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
-        .child(title_row(state))
+        .child(header(state))
         .child(tab_bar(state))
-        .child(toolbar(state))
         .child(body(state))
         .child(status_bar(state))
         .child(transfer_bar(state))
@@ -33,196 +30,104 @@ pub fn App() -> impl IntoElement {
         .child(daemon_dialog(state))
 }
 
-
-fn title_row(state: Signal<Ui>) -> impl IntoElement {
+fn header(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
+        .h(px(44.0))
+        .px(px(12.0))
         .gap(px(8.0))
-        .p(px(10.0))
-        .border_b_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().sidebar)
-        .child(text(icons::LOGO_LABEL).font_weight(FontWeight::BOLD).text_size(px(18.0)).text_color(move || theme().primary))
-        .child(text(icons::LOGO_TITLE).font_weight(FontWeight::SEMIBOLD).text_size(px(16.0)))
-        .child(text("Native Shell").text_size(px(12.0)).text_color(move || theme().muted_foreground))
-        .child(field(260.0, "http://127.0.0.1:8645", move || state.get().addr.clone(), move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.addr = text);
-        }))
-        .child(cmd("刷新", false, move || model::refresh(state)))
-        .child(cmd("设置", false, move || model::open_settings(state)))
-        .child(cmd_label(
-            move || format!("主题·{}", state.get().theme.label()),
-            move || {
-                let next = match state.get().theme {
-                    ThemePref::System => ThemePref::Light,
-                    ThemePref::Light => ThemePref::Dark,
-                    ThemePref::Dark => ThemePref::System,
-                };
-                model::set_theme(state, next);
-            },
-        ))
+        .bg(move || theme().background)
+        .child(icons::logo_mark(22.0))
         .child(
-            text(move || state.get().status.clone())
-                .flex_1()
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground)
-                .number_of_lines(1),
+            text(icons::LOGO_TITLE)
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(15.0)),
         )
+        .child(view().flex_1())
+        .child(icon_btn(ip::SUN, move || {
+            let next = match state.get().theme {
+                ThemePref::System => ThemePref::Light,
+                ThemePref::Light => ThemePref::Dark,
+                ThemePref::Dark => ThemePref::System,
+            };
+            model::set_theme(state, next);
+        }))
+        .child(icon_btn(ip::SETTINGS, move || model::open_settings(state)))
 }
 
 fn tab_bar(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_row()
-        .items_center()
+        .items_end()
+        .h(px(36.0))
+        .px(px(10.0))
         .gap(px(4.0))
-        .px(px(8.0))
-        .py(px(6.0))
+        .bg(move || theme().background)
         .border_b_1()
         .border_color(move || theme().border)
-        .bg(move || theme().secondary)
-        .child(scroll().flex_1().child(view().flex_row().gap(px(4.0)).child(dynamic(move || {
+        .child(scroll().flex_1().child(view().flex_row().gap(px(2.0)).items_end().child(dynamic(move || {
             let ui = state.get();
             ui.tabs
                 .iter()
                 .enumerate()
-                .map(|(index, tab_state)| {
-                    let title = tab_state.title(&ui.nodes);
-                    let _selected = ui.active_tab == index;
-                    cmd_label(
-                        move || title.clone(),
-                        move || model::switch_tab(state, index),
-                    )
+                .map(|(index, tab)| {
+                    let title = tab.title(&ui.nodes);
+                    let selected = ui.active_tab == index;
+                    tab_chip(state, index, title, selected)
                 })
                 .collect::<Vec<_>>()
         }))))
-        .child(cmd("+", false, move || model::new_tab_from_current(state)))
-        .child(cmd("×", false, move || model::close_active_tab(state)))
-        .child(cmd("重开", false, move || model::reopen_closed_tab(state)))
-}
-
-fn status_bar(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(12.0))
-        .px(px(10.0))
-        .py(px(4.0))
-        .border_t_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().card)
-        .child(
-            text(move || {
-                let ui = state.get();
-                format!("{} 项 · {}", model::visible_entries(&ui).len(), ui.folder_path)
-            })
-            .text_size(px(11.0))
-            .text_color(move || theme().muted_foreground)
-            .number_of_lines(1),
-        )
+        .child(icon_btn(ip::PLUS, move || model::new_tab_from_current(state)))
+        .child(icon_btn(ip::X, move || model::close_active_tab(state)))
         .child(when(
-            move || state.get().clip_set,
-            move || {
-                text(move || {
-                    let ui = state.get();
-                    format!("剪贴板：{} 项 · 来自 {}", ui.clip_items.len().max(usize::from(ui.clip_set)), ui.clip_node)
-                })
-                .text_size(px(11.0))
-            },
+            move || !state.get().closed_tabs.is_empty(),
+            move || tiny_text_btn("重开", move || model::reopen_closed_tab(state)),
         ))
 }
 
-fn toolbar(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .gap(px(8.0))
-        .p(px(10.0))
-        .border_b_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().card)
-                .child(toolbar_actions(state))
-        .child(toolbar_import(state))
-        .child(when(
-            move || !state.get().err.is_empty(),
-            move || {
-                text(move || state.get().err.clone())
-                    .text_size(px(12.0))
-                    .text_color(move || theme().destructive)
-            },
-        ))
-        .child(when(
-            move || !state.get().drag_note.is_empty(),
-            move || {
-                text(move || state.get().drag_note.clone())
-                    .text_size(px(12.0))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
-}
-
-
-fn toolbar_actions(state: Signal<Ui>) -> impl IntoElement {
+fn tab_chip(state: Signal<Ui>, index: usize, title: String, selected: bool) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
         .gap(px(6.0))
-        .child(cmd("←", false, move || model::nav_back(state)))
-        .child(cmd("→", false, move || model::nav_forward(state)))
-        .child(cmd("↑", false, move || model::go_up(state)))
-        .child(mode_button(state, "push", "推送"))
-        .child(mode_button(state, "pull", "拉取"))
-        .child(
-            text("A→B")
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(cmd("复制", false, move || model::copy_selected(state)))
-        .child(cmd("粘贴", false, move || model::paste(state)))
-        .child(cmd("清空剪贴板", false, move || model::clear_clipboard(state)))
-        .child(cmd("新建文件夹", false, move || model::begin_new_folder(state)))
-        .child(cmd("重命名", false, move || model::begin_rename(state)))
-        .child(cmd("删除", false, move || model::ask_delete(state)))
-        .child(cmd_label(
-            move || if state.get().view == "icons" { "图标".into() } else { "列表".into() },
-            move || {
-                let next = if state.get().view == "icons" { "list" } else { "icons" };
-                model::set_view(state, next);
-            },
-        ))
-        .child(field(120.0, "筛选", move || state.get().filter.clone(), move |text: &str| {
-            model::set_filter(state, text.to_owned());
+        .h(px(30.0))
+        .px(px(12.0))
+        .rounded(theme().radius)
+        .bg(move || {
+            if state.get().active_tab == index {
+                theme().card
+            } else {
+                theme().muted
+            }
+        })
+        .border_1()
+        .border_color(move || {
+            if state.get().active_tab == index {
+                theme().border
+            } else {
+                theme().border.opacity(0.0)
+            }
+        })
+        .on_press(move || model::switch_tab(state, index))
+        .child(icons::stroke_icon(ip::LAPTOP, 14.0).text_color(move || {
+            if state.get().active_tab == index {
+                theme().accent_foreground
+            } else {
+                theme().muted_foreground
+            }
         }))
-        .child(cmd("名", false, move || model::set_sort(state, "name")))
-        .child(cmd("大小", false, move || model::set_sort(state, "size")))
-        .child(cmd("时间", false, move || model::set_sort(state, "mtime")))
-        .child(cmd("缓存", false, move || model::cache_selected(state)))
-        .child(cmd("显示", false, move || model::reveal_cached(state)))
-        .child(cmd_label(
-            move || {
-                if state.get().preview_on {
-                    "预览开".to_owned()
-                } else {
-                    "预览关".to_owned()
-                }
-            },
-            move || model::toggle_preview(state),
-        ))
-}
-
-fn toolbar_import(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(6.0))
-        .child(field(280.0, "要导入的本地路径", move || state.get().import_path.clone(), move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.import_path = text);
-        }))
-        .child(cmd("导入", false, move || model::import_typed(state)))
         .child(
-            text("或把文件拖到右侧列表")
+            text(title)
                 .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground),
+                .number_of_lines(1)
+                .text_color(move || {
+                    if state.get().active_tab == index {
+                        theme().foreground
+                    } else {
+                        theme().muted_foreground
+                    }
+                }),
         )
 }
 
@@ -230,29 +135,38 @@ fn body(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_1()
         .flex_row()
+        .min_h(px(0.0))
         .child(tree_pane(state))
-        .child(right_pane(state))
+        .child(center_pane(state))
 }
 
 fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
     view()
-        .w(px(280.0))
+        .w(px(262.0))
         .flex_none()
         .border_r_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().card)
+        .border_color(move || theme().sidebar_border)
+        .bg(move || theme().sidebar)
         .child(
-            text("节点")
-                .p(px(8.0))
-                .text_size(px(11.0))
-                .text_color(move || theme().muted_foreground),
+            view()
+                .px(px(12.0))
+                .py(px(10.0))
+                .gap(px(2.0))
+                .child(
+                    text(move || {
+                        let n = state.get().nodes.len();
+                        format!("Tailnet · {n} 个节点")
+                    })
+                    .text_size(px(11.0))
+                    .text_color(move || theme().muted_foreground),
+                ),
         )
         .child(
             scroll().flex_1().child(when(
                 move || model::tree_rows(&state.get()).is_empty(),
                 move || {
                     text("还没有节点")
-                        .p(px(8.0))
+                        .p(px(12.0))
                         .text_size(px(13.0))
                         .text_color(move || theme().muted_foreground)
                 },
@@ -264,129 +178,313 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
                 ))
             })),
         )
+        .child(
+            text("仅显示白名单目录 · Ctrl/右键 = 新标签页")
+                .px(px(12.0))
+                .py(px(8.0))
+                .text_size(px(10.0))
+                .text_color(move || theme().muted_foreground),
+        )
 }
 
 fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
-    let depth = move || px(8.0 + row.get().depth as f32 * 14.0);
+    let depth = move || px(10.0 + row.get().depth as f32 * 14.0);
     view()
         .flex_row()
         .items_center()
         .h(px(28.0))
         .pl(depth)
         .pr(px(8.0))
+        .gap(px(6.0))
+        .rounded_md()
+        .mx(px(6.0))
         .bg(move || {
             let row = row.get();
             let ui = state.get();
             if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path {
-                theme().accent
+                theme().sidebar_accent
             } else {
-                theme().card
+                theme().sidebar.opacity(0.0)
             }
         })
         .on(EventKind::Press, move |payload: &EventPayload| {
             if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
-                let force_new = modifiers.ctrl || modifiers.cmd;
-                if force_new {
+                if modifiers.ctrl || modifiers.cmd {
                     model::click_tree_new_tab(state, row.get());
-                } else {
-                    model::click_tree(state, row.get());
+                    return;
                 }
-            } else {
-                model::click_tree(state, row.get());
             }
+            model::click_tree(state, row.get());
         })
         .on_context_menu(move |_e: &ContextMenuEvent| {
-            // Secondary click ≈ approved middle-click "open new tab"
-            // (nsh Linux only routes primary/secondary mouse buttons).
             model::click_tree_new_tab(state, row.get());
         })
+        .child(dynamic(move || -> AnyElement {
+            let row = row.get();
+            if row.is_node {
+                let online = state
+                    .get()
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == row.node)
+                    .map(|n| n.online && n.agent_ok)
+                    .unwrap_or(false);
+                let ro = state
+                    .get()
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == row.node)
+                    .map(|n| n.read_only)
+                    .unwrap_or(false);
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(icons::stroke_icon(ip::LAPTOP, 14.0).text_color(move || theme().muted_foreground))
+                    .child(icons::status_dot(online, ro))
+                    .into_element()
+            } else {
+                icons::folder_icon(14.0, false)
+                    .text_color(move || theme().muted_foreground)
+                    .into_element()
+            }
+        }))
         .child(
-            text(move || {
-                let row = row.get();
-                let open = state.get().open.iter().any(|key| key == &row.key);
-                let mark = if open { "▾ " } else { "▸ " };
-                format!("{mark}{}", row.label)
-            })
-            .text_size(px(13.0))
-            .number_of_lines(1),
+            text(move || row.get().label.clone())
+            .text_size(px(12.5))
+            .number_of_lines(1)
+            .flex_1(),
+        )
+        .child(when(
+            move || {
+                state
+                    .get()
+                    .nodes
+                    .iter()
+                    .find(|n| n.id == row.get().node)
+                    .map(|n| n.read_only && row.get().is_node)
+                    .unwrap_or(false)
+            },
+            || {
+                text("只读")
+                    .text_size(px(10.0))
+                    .text_color(move || theme().muted_foreground)
+            },
+        ))
+}
+
+fn center_pane(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_1()
+        .flex_col()
+        .min_w(px(0.0))
+        .bg(move || theme().card)
+        .child(action_toolbar(state))
+        .child(nav_controls(state))
+        .child(name_editor(state))
+        .child(
+            view()
+                .flex_1()
+                .flex_row()
+                .min_h(px(0.0))
+                .child(file_list(state))
+                .child(when(
+                    move || state.get().preview_on,
+                    move || details_pane(state),
+                )),
         )
 }
 
-fn inline_editors(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .child(when(
-            move || state.get().inline_new,
-            move || {
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .p(px(8.0))
-                    .child(field(200.0, "新文件夹名", move || state.get().new_name.clone(), move |text: &str| {
-                        let text = text.to_owned();
-                        state.update(|ui| ui.new_name = text);
-                    }))
-                    .child(cmd("创建", true, move || model::mkdir(state)))
-                    .child(cmd("取消", false, move || state.update(|ui| { ui.inline_new = false; ui.name_error.clear(); })))
-                    .child(when(move || !state.get().name_error.is_empty(), move || text(move || state.get().name_error.clone()).text_size(px(12.0)).text_color(move || theme().destructive)))
-            },
-        ))
-        .child(when(
-            move || state.get().inline_rename,
-            move || {
-                view()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(6.0))
-                    .p(px(8.0))
-                    .child(field(200.0, "新名称", move || state.get().rename_to.clone(), move |text: &str| {
-                        let text = text.to_owned();
-                        state.update(|ui| ui.rename_to = text);
-                    }))
-                    .child(cmd("确定", true, move || model::rename(state)))
-                    .child(cmd("取消", false, move || state.update(|ui| { ui.inline_rename = false; ui.name_error.clear(); })))
-            },
-        ))
-}
-
-fn right_pane(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .flex_1()
-        .child(crumb(state))
-        .child(inline_editors(state))
-        .child(file_list(state))
-        .child(preview(state))
-}
-
-fn crumb(state: Signal<Ui>) -> impl IntoElement {
+fn action_toolbar(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .gap(px(8.0))
-        .px(px(12.0))
-        .h(px(36.0))
+        .gap(px(4.0))
+        .px(px(10.0))
+        .py(px(8.0))
         .border_b_1()
         .border_color(move || theme().border)
-        .child(cmd("上级", false, move || model::go_up(state)))
+        .child(icon_btn(ip::CHEVRON_LEFT, move || model::nav_back(state)))
+        .child(icon_btn(ip::CHEVRON_RIGHT, move || model::nav_forward(state)))
+        .child(icon_btn(ip::ARROW_UP, move || model::go_up(state)))
+        .child(view().w(px(6.0)))
+        .child(tool_labeled(ip::FOLDER_PLUS, "新建文件夹", move || model::begin_new_folder(state)))
+        .child(tool_labeled(ip::COPY, "复制", move || model::copy_selected(state)))
+        .child(tool_labeled(ip::CLIPBOARD, "粘贴", move || model::paste(state)))
+        .child(tool_labeled(ip::PENCIL, "重命名", move || model::begin_rename(state)))
+        .child(tool_labeled(ip::TRASH, "删除", move || model::ask_delete(state)))
+        .child(tool_labeled(ip::REFRESH, "刷新", move || model::refresh(state)))
+        .child(view().flex_1())
+        .child(when(
+            move || state.get().clip_set,
+            move || {
+                text(move || {
+                    let ui = state.get();
+                    format!("剪贴板 {} 项", ui.clip_items.len().max(1))
+                })
+                .text_size(px(11.0))
+                .text_color(move || theme().muted_foreground)
+            },
+        ))
+        .child(tiny_text_btn("更多", move || {
+            state.update(|ui| ui.more_open = !ui.more_open);
+        }))
+        .child(when(
+            move || state.get().more_open,
+            move || more_menu(state),
+        ))
+}
+
+fn more_menu(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .child(seg_mode(state, "push", "推送"))
+        .child(seg_mode(state, "pull", "拉取"))
+        .child(tiny_text_btn("导入", move || {
+            state.update(|ui| {
+                ui.status = "拖放文件到列表区域导入，或在设置中使用高级连接".into();
+                ui.more_open = false;
+            });
+        }))
+        .child(tiny_text_btn("清空剪贴板", move || model::clear_clipboard(state)))
+        .child(tiny_text_btn("缓存", move || model::cache_selected(state)))
+        .child(tiny_text_btn("显示缓存", move || model::reveal_cached(state)))
+}
+
+fn nav_controls(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(6.0))
+        .px(px(10.0))
+        .py(px(8.0))
+        .border_b_1()
+        .border_color(move || theme().border)
         .child(
-            text(move || {
-                let path = state.get().folder_path.clone();
-                if path.is_empty() {
-                    "请在左侧选择文件夹".to_owned()
-                } else {
-                    path
-                }
-            })
-            .flex_1()
-            .text_size(px(12.0))
-            .text_color(move || theme().muted_foreground)
-            .number_of_lines(1),
+            view()
+                .flex_1()
+                .flex_row()
+                .items_center()
+                .h(px(32.0))
+                .px(px(10.0))
+                .rounded_md()
+                .border_1()
+                .border_color(move || theme().primary.opacity(0.55))
+                .bg(move || theme().background)
+                .child(
+                    text(move || {
+                        let ui = state.get();
+                        if ui.folder_node.is_empty() {
+                            "选择左侧节点".into()
+                        } else {
+                            format!("{} › {}", ui.folder_node, ui.folder_path)
+                        }
+                    })
+                    .text_size(px(12.5))
+                    .number_of_lines(1)
+                    .flex_1(),
+                ),
         )
+        .child(
+            view()
+                .flex_row()
+                .items_center()
+                .w(px(180.0))
+                .h(px(32.0))
+                .px(px(8.0))
+                .gap(px(4.0))
+                .rounded_md()
+                .border_1()
+                .border_color(move || theme().input)
+                .bg(move || theme().muted)
+                .child(icons::stroke_icon(ip::SEARCH, 14.0).text_color(move || theme().muted_foreground))
+                .child(
+                    input()
+                        .flex_1()
+                        .h(px(28.0))
+                        .text_size(px(12.5))
+                        .placeholder("筛选")
+                        .value(move || state.get().filter.clone())
+                        .on_change(move |text: &str| model::set_filter(state, text.to_owned())),
+                ),
+        )
+        .child(tiny_text_btn("名称", move || model::set_sort(state, "name")))
+        .child(seg_icon(ip::LIST, move || state.get().view != "icons", move || model::set_view(state, "list")))
+        .child(seg_icon(ip::LAYOUT_GRID, move || state.get().view == "icons", move || model::set_view(state, "icons")))
+        .child(seg_icon(ip::PANEL_RIGHT, move || state.get().preview_on, move || model::toggle_preview(state)))
+}
+
+fn name_editor(state: Signal<Ui>) -> impl IntoElement {
+    when(
+        move || state.get().inline_new || state.get().inline_rename,
+        move || {
+            view()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .px(px(12.0))
+                .py(px(8.0))
+                .border_b_1()
+                .border_color(move || theme().border)
+                .child(
+                    text(move || {
+                        if state.get().inline_rename {
+                            "重命名"
+                        } else {
+                            "新建文件夹"
+                        }
+                    })
+                    .text_size(px(12.0))
+                    .text_color(move || theme().muted_foreground),
+                )
+                .child(field(280.0, "名称", move || {
+                    let ui = state.get();
+                    if ui.inline_rename { ui.rename_to.clone() } else { ui.new_name.clone() }
+                }, move |t: &str| {
+                    let t = t.to_owned();
+                    state.update(|ui| {
+                        if ui.inline_rename {
+                            ui.rename_to = t;
+                        } else {
+                            ui.new_name = t;
+                        }
+                        ui.name_error.clear();
+                    });
+                }))
+                .child(cmd("确定", true, move || {
+                    if state.get().inline_rename {
+                        model::rename(state);
+                    } else {
+                        model::mkdir(state);
+                    }
+                }))
+                .child(cmd("取消", false, move || {
+                    state.update(|ui| {
+                        ui.inline_rename = false;
+                        ui.inline_new = false;
+                        ui.new_name.clear();
+                        ui.rename_to.clear();
+                        ui.name_error.clear();
+                    });
+                }))
+                .child(when(
+                    move || !state.get().name_error.is_empty(),
+                    move || {
+                        text(move || state.get().name_error.clone())
+                            .text_size(px(12.0))
+                            .text_color(move || theme().destructive)
+                    },
+                ))
+        },
+    )
 }
 
 fn file_list(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_1()
+        .min_w(px(0.0))
         .on_file_drop(move |event: &FileDropEvent| {
             model::import_dropped(state, event.uris.clone());
         })
@@ -401,18 +499,18 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
             }
             let rows = model::visible_entries(&ui);
             if rows.is_empty() {
-                return empty_hint("这个文件夹是空的，或筛选无结果。可以把桌面上的文件拖进来导入。").into_element();
+                return empty_hint("这个文件夹是空的，或筛选无结果。").into_element();
             }
             if ui.view == "icons" {
                 return view()
                     .flex_row()
                     .flex_wrap()
-                    .gap(px(8.0))
-                    .p(px(10.0))
+                    .gap(px(10.0))
+                    .p(px(12.0))
                     .child(each(
                         move || model::visible_entries(&state.get()),
                         |pair| pair.1.path.clone(),
-                        move |pair, _index| file_icon(state, pair),
+                        move |pair, _| file_icon_tile(state, pair),
                     ))
                     .into_element();
             }
@@ -420,18 +518,105 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
                 .child(each(
                     move || model::visible_entries(&state.get()),
                     |pair| pair.1.path.clone(),
-                    move |pair, _index| file_row(state, pair),
+                    move |pair, _| file_row(state, pair),
                 ))
                 .into_element()
         })))
+        .child(when(
+            move || !state.get().err.is_empty(),
+            move || {
+                text(move || state.get().err.clone())
+                    .p(px(8.0))
+                    .text_size(px(12.0))
+                    .text_color(move || theme().destructive)
+            },
+        ))
 }
 
-fn file_icon(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+fn file_header() -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .h(px(28.0))
+        .px(px(12.0))
+        .bg(move || theme().muted)
+        .child(column_label("名称").flex_1())
+        .child(column_label("修改时间").w(px(150.0)))
+        .child(column_label("类型").w(px(90.0)))
+        .child(column_label("大小").w(px(80.0)))
+}
+
+fn file_row(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .h(px(32.0))
+        .px(px(12.0))
+        .gap(px(8.0))
+        .bg(move || {
+            let ui = state.get();
+            let (orig, entry) = pair.get();
+            let selected =
+                ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path);
+            if selected {
+                theme().selection()
+            } else {
+                theme().card
+            }
+        })
+        .on(EventKind::Press, move |payload: &EventPayload| {
+            let (orig, entry) = pair.get();
+            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+                if modifiers.ctrl || modifiers.cmd {
+                    model::toggle_select_path(state, entry.path);
+                    return;
+                }
+            }
+            model::activate_row(state, orig as i32);
+        })
+        .child(dynamic(move || {
+            let e = pair.get().1;
+            let kind = icons::file_kind(&e.name, e.is_dir);
+            icons::typed_file_icon(kind, 16.0)
+        }))
+        .child(
+            text(move || pair.get().1.name.clone())
+                .flex_1()
+                .text_size(px(13.0))
+                .number_of_lines(1),
+        )
+        .child(
+            text(move || format_time(&pair.get().1.mod_time))
+                .w(px(150.0))
+                .text_size(px(12.0))
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            text(move || {
+                let e = pair.get().1;
+                icons::type_label(icons::file_kind(&e.name, e.is_dir)).to_owned()
+            })
+            .w(px(90.0))
+            .text_size(px(12.0))
+            .text_color(move || theme().muted_foreground),
+        )
+        .child(
+            text(move || {
+                let e = pair.get().1;
+                size_label(e.size, e.is_dir)
+            })
+            .w(px(80.0))
+            .text_size(px(12.0))
+            .text_color(move || theme().muted_foreground),
+        )
+}
+
+fn file_icon_tile(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
     view()
         .w(px(96.0))
-        .h(px(100.0))
-        .gap(px(4.0))
-        .p(px(6.0))
+        .h(px(104.0))
+        .gap(px(6.0))
+        .p(px(8.0))
         .items_center()
         .rounded(theme().radius)
         .bg(move || {
@@ -440,9 +625,9 @@ fn file_icon(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl I
             let selected =
                 ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path);
             if selected {
-                theme().accent.opacity(0.2)
+                theme().selection()
             } else {
-                theme().card
+                theme().muted
             }
         })
         .border_1()
@@ -457,15 +642,68 @@ fn file_icon(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl I
             }
             model::activate_row(state, orig as i32);
         })
-        .child(
-            text(move || if pair.get().1.is_dir { "📁" } else { "📄" })
-                .text_size(px(28.0)),
-        )
+        .child(dynamic(move || {
+            let e = pair.get().1;
+            icons::typed_file_icon(icons::file_kind(&e.name, e.is_dir), 36.0)
+        }))
         .child(
             text(move || pair.get().1.name.clone())
                 .text_size(px(11.0))
                 .number_of_lines(2),
         )
+}
+
+fn details_pane(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .w(px(300.0))
+        .flex_none()
+        .border_l_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().muted)
+        .p(px(12.0))
+        .gap(px(8.0))
+        .child(
+            text("详情")
+                .text_size(px(11.0))
+                .text_color(move || theme().muted_foreground),
+        )
+        .child(scroll().flex_1().child(dynamic(move || preview_body(state))))
+}
+
+fn preview_body(state: Signal<Ui>) -> impl IntoElement {
+    let ui = state.get();
+    if !ui.preview_on {
+        return text("详情已关闭。")
+            .text_size(px(13.0))
+            .text_color(move || theme().muted_foreground)
+            .into_element();
+    }
+    if ui.preview_kind == "image" && !ui.preview_image.is_empty() {
+        return image(move || state.get().preview_image.clone())
+            .resize_mode(ResizeMode::Contain)
+            .h(px(160.0))
+            .into_element();
+    }
+    if !ui.preview_text.is_empty() {
+        return view()
+            .gap(px(8.0))
+            .child(
+                text(move || state.get().preview_path.clone())
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .number_of_lines(2),
+            )
+            .child(
+                text(move || state.get().preview_text.clone())
+                    .text_size(px(12.0))
+                    .text_color(move || theme().foreground),
+            )
+            .into_element();
+    }
+    text("选择文件以预览文本、图片或 PDF。")
+        .text_size(px(13.0))
+        .text_color(move || theme().muted_foreground)
+        .into_element()
 }
 
 fn empty_hint(message: &'static str) -> impl IntoElement {
@@ -475,274 +713,175 @@ fn empty_hint(message: &'static str) -> impl IntoElement {
         .text_color(move || theme().muted_foreground)
 }
 
-fn file_header() -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .h(px(28.0))
-        .px(px(12.0))
-        .bg(move || theme().muted)
-        .child(column_label("名称").flex_1())
-        .child(column_label("大小").w(px(90.0)))
-        .child(column_label("修改时间").w(px(150.0)))
-}
-
 fn column_label(label: &'static str) -> nsh_core::element::Text {
     text(label)
         .text_size(px(11.0))
         .text_color(move || theme().muted_foreground)
 }
 
-fn file_row(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+fn status_bar(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
-        .h(px(30.0))
+        .gap(px(12.0))
         .px(px(12.0))
-        .bg(move || {
-            let ui = state.get();
-            let (orig, entry) = pair.get();
-            let selected =
-                ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path);
-            if selected {
-                theme().accent
-            } else {
-                theme().background
-            }
-        })
-        .on(EventKind::Press, move |payload: &EventPayload| {
-            let (orig, entry) = pair.get();
-            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
-                if modifiers.ctrl || modifiers.cmd {
-                    model::toggle_select_path(state, entry.path);
-                    return;
-                }
-            }
-            model::activate_row(state, orig as i32);
-        })
-        .child(
-            text(move || {
-                let entry = pair.get().1;
-                if entry.is_dir {
-                    format!("{}/", entry.name)
-                } else {
-                    entry.name.clone()
-                }
-            })
-            .flex_1()
-            .text_size(px(13.0))
-            .number_of_lines(1),
-        )
-        .child(
-            text(move || {
-                let entry = pair.get().1;
-                size_label(entry.size, entry.is_dir)
-            })
-                .w(px(90.0))
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(
-            text(move || format_time(&pair.get().1.mod_time))
-                .w(px(150.0))
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground),
-        )
-}
-
-fn preview(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .h(px(220.0))
+        .h(px(28.0))
         .border_t_1()
         .border_color(move || theme().border)
-        .bg(move || theme().card)
-        .p(px(12.0))
-        .gap(px(6.0))
+        .bg(move || theme().background)
         .child(
             text(move || {
-                let kind = state.get().preview_kind.clone();
-                if kind.is_empty() {
-                    "预览".to_owned()
+                let ui = state.get();
+                let n = model::visible_entries(&ui).len();
+                let sel = if ui.selected_paths.is_empty() {
+                    if ui.selected >= 0 { 1 } else { 0 }
                 } else {
-                    format!("预览 · {kind}")
+                    ui.selected_paths.len()
+                };
+                if sel > 0 {
+                    format!("{n} 个项目 · 已选择 {sel} 项")
+                } else {
+                    format!("{n} 个项目")
                 }
             })
             .text_size(px(11.0))
             .text_color(move || theme().muted_foreground),
         )
-        .child(scroll().flex_1().child(dynamic(move || preview_body(state))))
-}
-
-fn preview_body(state: Signal<Ui>) -> impl IntoElement {
-    let ui = state.get();
-    if !ui.preview_on {
-        return text("预览已关闭。")
-            .text_size(px(13.0))
+        .child(view().flex_1())
+        .child(
+            text(move || {
+                let ui = state.get();
+                if ui.folder_node.is_empty() {
+                    ui.status.clone()
+                } else {
+                    format!("{} · {}", ui.folder_node, ui.status)
+                }
+            })
+            .text_size(px(11.0))
             .text_color(move || theme().muted_foreground)
-            .into_element();
-    }
-    if ui.preview_kind == "image" && !ui.preview_image.is_empty() {
-        return image(move || state.get().preview_image.clone())
-            .resize_mode(ResizeMode::Contain)
-            .h(px(160.0))
-            .w(px(320.0))
-            .into_element();
-    }
-    if ui.preview_kind == "image" {
-        return text("无法解码这张图片。")
-            .text_size(px(13.0))
-            .text_color(move || theme().muted_foreground)
-            .into_element();
-    }
-    if ui.preview_text.is_empty() {
-        let message = if ui.preview_kind == "pdf" {
-            "正在读取 PDF 文本…"
-        } else if ui.preview_kind == "other" {
-            "这个文件没有文本预览。"
-        } else {
-            "选择文件以预览文本、图片或 PDF。"
-        };
-        return text(message)
-            .text_size(px(13.0))
-            .text_color(move || theme().muted_foreground)
-            .into_element();
-    }
-    let heading = if ui.preview_kind == "pdf" {
-        "PDF 文本（agent 提取，不是整页渲染）"
-    } else {
-        ""
-    };
-    view()
-        .gap(px(4.0))
-        .child(when(
-            move || state.get().preview_kind == "pdf",
-            move || {
-                text(heading)
-                    .text_size(px(12.0))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
-        .child(each(
-            move || preview_lines(&state.get().preview_text),
-            |line| line.0,
-            |line, _| text(move || line.get().1.clone()).text_size(px(12.0)),
-        ))
-        .into_element()
-}
-
-fn preview_lines(text: &str) -> Vec<(usize, String)> {
-    if text.is_empty() {
-        Vec::new()
-    } else {
-        text.split('\n')
-            .enumerate()
-            .map(|(index, line)| (index, line.to_owned()))
-            .collect()
-    }
+            .number_of_lines(1),
+        )
 }
 
 fn transfer_bar(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .max_h(px(140.0))
-        .border_t_1()
-        .border_color(move || theme().border)
-        .bg(move || theme().card)
-        .p(px(8.0))
-        .gap(px(4.0))
-        .child(
-            text("传输")
-                .text_size(px(11.0))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(scroll().max_h(px(100.0)).child(dynamic(move || -> AnyElement {
-            let ui = state.get();
-            if ui.transfers.is_empty() && ui.imports.is_empty() {
-                return text("在一个节点上复制，打开另一个节点的文件夹，再粘贴。文件字节在两个 agent 之间直接传输。")
-                    .text_size(px(12.0))
-                    .text_color(move || theme().muted_foreground)
-                    .into_element();
-            }
+    when(
+        move || !state.get().transfers.is_empty(),
+        move || {
             view()
-                .gap(px(4.0))
+                .px(px(12.0))
+                .py(px(6.0))
+                .border_t_1()
+                .border_color(move || theme().border)
+                .bg(move || theme().card)
                 .child(each(
-                    move || state.get().transfers.clone(),
-                    |item| item.id.clone(),
-                    move |item, _| transfer_row(state, item),
-                ))
-                .child(each(
-                    move || state.get().imports.clone(),
-                    |item| item.id.clone(),
-                    move |item, _| {
-                        text(move || format!("导入  {}", job_line(&item.get())))
-                            .text_size(px(12.0))
+                    move || {
+                        state
+                            .get()
+                            .transfers
+                            .iter()
+                            .map(|t| job_line(&t.job))
+                            .collect::<Vec<_>>()
+                    },
+                    |line| line.clone(),
+                    move |line, _| {
+                        text(move || line.get())
+                            .text_size(px(11.0))
+                            .text_color(move || theme().muted_foreground)
                             .number_of_lines(1)
                     },
                 ))
-                .into_element()
-        })))
+        },
+    )
 }
 
-fn transfer_row(state: Signal<Ui>, item: ReadSignal<api::Transfer>) -> impl IntoElement {
-    view()
-        .gap(px(2.0))
-        .child(
-            view()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(
-                    text(move || {
-                        let item = item.get();
-                        format!(
-                            "{}  {} → {}  {}",
-                            mode_label(&item.mode),
-                            item.from_node,
-                            item.to_node,
-                            job_line(&item.job)
-                        )
-                    })
-                    .flex_1()
-                    .text_size(px(12.0))
-                    .number_of_lines(1),
-                )
-                .child(when(
-                    move || item.get().job.status == "running",
-                    move || {
-                        let id = item.get().id.clone();
-                        cmd("取消", false, move || model::cancel_transfer(state, id.clone()))
-                    },
-                ))
-                .child(when(
-                    move || matches!(item.get().job.status.as_str(), "error" | "canceled" | "interrupted"),
-                    move || {
-                        let id = item.get().id.clone();
-                        cmd("继续", false, move || model::resume_transfer(state, id.clone()))
-                    },
-                )),
-        )
-        .child(when(
-            move || item.get().job.bytes_total > 0,
-            move || {
-                let job = item.get().job.clone();
-                let frac = if job.bytes_total <= 0 {
-                    0.0
-                } else {
-                    (job.bytes_done as f32 / job.bytes_total as f32).clamp(0.0, 1.0)
-                };
-                view()
-                    .h(px(4.0))
-                    .w_full()
-                    .rounded_full()
-                    .bg(move || theme().muted)
-                    .child(
-                        view()
-                            .h(px(4.0))
-                            .w(percentage(frac))
-                            .rounded_full()
-                            .bg(move || theme().primary),
-                    )
-            },
-        ))
+fn icon_btn(d: &'static str, on_press: impl Fn() + 'static) -> impl IntoElement {
+    button()
+        .w(px(30.0))
+        .h(px(30.0))
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .bg(move || theme().secondary.opacity(0.0))
+        .on_press(on_press)
+        .child(icons::stroke_icon(d, 16.0).text_color(move || theme().foreground))
+}
+
+fn tool_labeled(d: &'static str, label: &'static str, on_press: impl Fn() + 'static) -> impl IntoElement {
+    button()
+        .flex_row()
+        .items_center()
+        .gap(px(5.0))
+        .px(px(10.0))
+        .h(px(30.0))
+        .rounded_md()
+        .border_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().card)
+        .on_press(on_press)
+        .child(icons::stroke_icon(d, 14.0).text_color(move || theme().foreground))
+        .child(text(label).text_size(px(12.5)))
+}
+
+fn tiny_text_btn(label: &'static str, on_press: impl Fn() + 'static) -> impl IntoElement {
+    button()
+        .px(px(8.0))
+        .h(px(28.0))
+        .rounded_md()
+        .bg(move || theme().secondary)
+        .on_press(on_press)
+        .child(text(label).text_size(px(12.0)).text_color(move || theme().secondary_foreground))
+}
+
+fn seg_mode(state: Signal<Ui>, mode: &'static str, label: &'static str) -> impl IntoElement {
+    button()
+        .px(px(8.0))
+        .h(px(28.0))
+        .rounded_md()
+        .bg(move || {
+            if state.get().mode == mode {
+                theme().primary
+            } else {
+                theme().secondary
+            }
+        })
+        .on_press(move || state.update(|ui| ui.mode = mode.to_owned()))
+        .child(text(label).text_size(px(12.0)).text_color(move || {
+            if state.get().mode == mode {
+                theme().primary_foreground
+            } else {
+                theme().secondary_foreground
+            }
+        }))
+}
+
+fn seg_icon(
+    d: &'static str,
+    active: impl Fn() -> bool + Clone + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let active_bg = active.clone();
+    let active_fg = active;
+    button()
+        .w(px(30.0))
+        .h(px(30.0))
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .bg(move || {
+            if active_bg() {
+                theme().accent
+            } else {
+                theme().secondary.opacity(0.0)
+            }
+        })
+        .on_press(on_press)
+        .child(icons::stroke_icon(d, 15.0).text_color(move || {
+            if active_fg() {
+                theme().accent_foreground
+            } else {
+                theme().muted_foreground
+            }
+        }))
 }
 
 fn conflict_dialog(state: Signal<Ui>) -> impl IntoElement {
@@ -830,6 +969,12 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                             .child(cmd("深色", false, move || model::set_theme(state, ThemePref::Dark))),
                     )
                     .child(text(move || net_line(&state.get())).text_size(px(13.0)))
+                    .child(text("高级 · Agent 连接").text_size(px(12.0)).text_color(move || theme().muted_foreground))
+                    .child(field(420.0, "http://127.0.0.1:8645", move || state.get().addr.clone(), move |text: &str| {
+                        let text = text.to_owned();
+                        state.update(|ui| ui.addr = text);
+                    }))
+                    .child(cmd("连接 / 刷新", false, move || model::refresh(state)))
                     .child(
                         text(move || {
                             if state.get().auth_configured {
@@ -962,29 +1107,6 @@ fn card() -> nsh_core::element::View {
         .bg(move || theme().popover)
 }
 
-fn mode_button(state: Signal<Ui>, mode: &'static str, label: &'static str) -> impl IntoElement {
-    button()
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded_md()
-        .bg(move || {
-            if state.get().mode == mode {
-                theme().primary
-            } else {
-                theme().secondary
-            }
-        })
-        .on_press(move || state.update(|ui| ui.mode = mode.to_owned()))
-        .child(
-            text(label).text_size(px(13.0)).text_color(move || {
-                if state.get().mode == mode {
-                    theme().primary_foreground
-                } else {
-                    theme().secondary_foreground
-                }
-            }),
-        )
-}
 
 fn cmd(label: &'static str, primary: bool, on_press: impl Fn() + 'static) -> impl IntoElement {
     button()

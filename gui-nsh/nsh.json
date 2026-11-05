@@ -4,5 +4,71 @@
   "version": "0.1.0",
   "build": 1,
   "rust": ".",
-  "root": "ui::App"
+  "root": "ui::App",
+  "theme": {
+    "name": "Tailfile",
+    "cssVars": {
+      "theme": {
+        "radius": "0.5rem"
+      },
+      "light": {
+        "background": "#e8ebf0",
+        "foreground": "#1d2129",
+        "card": "#ffffff",
+        "card-foreground": "#1d2129",
+        "popover": "#ffffff",
+        "popover-foreground": "#1d2129",
+        "primary": "#2563eb",
+        "primary-foreground": "#ffffff",
+        "secondary": "#f1f3f6",
+        "secondary-foreground": "#374151",
+        "muted": "#f6f7f9",
+        "muted-foreground": "#6b7280",
+        "accent": "#eaf1fe",
+        "accent-foreground": "#1d4ed8",
+        "destructive": "#d92d20",
+        "border": "#e2e5ea",
+        "input": "#d3d8df",
+        "ring": "#2563eb",
+        "sidebar": "#f6f7f9",
+        "sidebar-foreground": "#1d2129",
+        "sidebar-primary": "#2563eb",
+        "sidebar-primary-foreground": "#ffffff",
+        "sidebar-accent": "#eaf1fe",
+        "sidebar-accent-foreground": "#1d4ed8",
+        "sidebar-border": "#e2e5ea",
+        "sidebar-ring": "#2563eb",
+        "selection": "#dce8fd"
+      },
+      "dark": {
+        "background": "#121419",
+        "foreground": "#e7e9ed",
+        "card": "#1b1e25",
+        "card-foreground": "#e7e9ed",
+        "popover": "#1b1e25",
+        "popover-foreground": "#e7e9ed",
+        "primary": "#2f6fe4",
+        "primary-foreground": "#ffffff",
+        "secondary": "#2b3039",
+        "secondary-foreground": "#cfd3da",
+        "muted": "#171a20",
+        "muted-foreground": "#9aa2ae",
+        "accent": "rgba(79,141,247,0.16)",
+        "accent-foreground": "#82adff",
+        "destructive": "#d13a3f",
+        "border": "#2c313a",
+        "input": "#3a404b",
+        "ring": "#2f6fe4",
+        "sidebar": "#171a20",
+        "sidebar-foreground": "#e7e9ed",
+        "sidebar-primary": "#2f6fe4",
+        "sidebar-primary-foreground": "#ffffff",
+        "sidebar-accent": "rgba(79,141,247,0.16)",
+        "sidebar-accent-foreground": "#82adff",
+        "sidebar-border": "#2c313a",
+        "sidebar-ring": "#2f6fe4",
+        "selection": "rgba(79,141,247,0.26)"
+      }
+    }
+  }
 }
