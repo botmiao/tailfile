@@ -16,6 +16,7 @@ var (
 	errPartial   = errors.New("refusing to touch a transfer partial")
 	errExists    = errors.New("destination already exists")
 	errNotFile   = errors.New("not a regular file")
+	errIsRoot    = errors.New("refusing to delete a configured root")
 )
 
 // Roots is the set of directories the agent may read or write.

@@ -133,3 +133,15 @@ Windows（PowerShell）：
 - [ ] export 一个不同的 `TS_AUTHKEY` 并重启（Windows PowerShell：`$env:TS_AUTHKEY = '...'`）。日志显示来源为 `TS_AUTHKEY`。文件不变。节点使用环境变量中的值。
 - [ ] 在 Settings 中清除，然后在不设置 `TS_AUTHKEY`、不带 `-authkey` 的情况下重启。文件已删除。tsnet 打印登录 URL，而不是使用旧 key。
 - [ ] 在 tailnet 端口（8644）上 `GET` 设置 URL。返回的不是设置文档。
+
+
+## gui-nsh 批准 UI / delete API（2026-11）
+
+```bash
+cd agent && GOWORK=off go test ./...
+cd gui-nsh && cargo test
+# 可选 GUI 冒烟
+xvfb-run -a cargo run -- --help
+```
+
+新增用例：`TestDelete*`（鉴权、根拒绝、只读、穿越/符号链接、成功删文件/目录）、`persist`/`names`/`daemon` 单元测试、`demo_mkdir_rename_delete`。

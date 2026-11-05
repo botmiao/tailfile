@@ -26,6 +26,7 @@ func (s *Server) fileRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("HEAD /v1/fs/read", s.handleRead)
 	mux.HandleFunc("POST /v1/fs/mkdir", s.handleMkdir)
 	mux.HandleFunc("POST /v1/fs/rename", s.handleRename)
+	mux.HandleFunc("POST /v1/fs/delete", s.handleDelete)
 	mux.HandleFunc("POST /v1/uploads", s.handleUploadStart)
 	mux.HandleFunc("PATCH /v1/uploads/{id}", s.handleUploadPatch)
 	mux.HandleFunc("GET /v1/uploads/{id}", s.handleUploadStatus)
@@ -268,6 +269,40 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.rename(s.rootsFor(r.Context()), body.From, body.To); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+
+func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Node string `json:"node"`
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, statusErr(400, "bad json"))
+		return
+	}
+	if body.Path == "" {
+		writeErr(w, statusErr(400, "path required"))
+		return
+	}
+	if body.Node != "" && s.resolver != nil {
+		api, err := s.resolver.API(r.Context(), body.Node)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if err := api.Delete(r.Context(), body.Path); err != nil {
+			writeErr(w, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.deletePath(s.rootsFor(r.Context()), body.Path); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -891,7 +926,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		code = se.Code
 	case errors.Is(err, os.ErrNotExist):
 		code = http.StatusNotFound
-	case errors.Is(err, errForbidden), errors.Is(err, errReadOnly):
+	case errors.Is(err, errForbidden), errors.Is(err, errReadOnly), errors.Is(err, errIsRoot):
 		code = http.StatusForbidden
 	case errors.Is(err, errBadPath), errors.Is(err, errNotFile), errors.Is(err, errPartial):
 		code = http.StatusBadRequest

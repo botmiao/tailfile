@@ -1,6 +1,6 @@
 # Tailfile
 
-一个简短的技术验证（spike）：在同一个 Tailscale 文件 agent 之上做了三个 Finder 风格的外壳（Wails、MyGo、Native Shell），方便你在自己的机器上试用，并从中挑选 GUI 技术栈。这不是产品。没有删除功能，没有提权，也没有第二个窗格。
+一个简短的技术验证（spike）：在同一个 Tailscale 文件 agent 之上做了三个 Finder 风格的外壳（Wails、MyGo、Native Shell），方便你在自己的机器上试用，并从中挑选 GUI 技术栈。这不是产品。gui-nsh 批准 UI 已支持删除（确认后永久删除）、标签页与主题等；仍无提权，也没有第二个窗格。
 
 左侧窗格是一棵树。根节点是运行 agent 的 tailnet 节点，下面是文件夹。右侧窗格是文件列表（名称、大小、修改时间），以及文本、图片和 PDF 的预览。在节点 A 上复制，粘贴到节点 B 的某个文件夹。GUI 只负责让其中一个 agent 推送（push）或拉取（pull），文件字节直接从 A 传到 B。
 
@@ -375,3 +375,8 @@ Native Shell 的 `cargo test` 覆盖 token 路径、`-agent` / `-state` / `-toke
 ## 此虚拟机没有做的事
 
 没有在 Windows、macOS 或 Hyprland 上逐一点击测试 GUI。Wails server 模式在 Chrome 中针对 `tailfile-agent -demo` 测试过（树、文本、图片、PDF canvas、push、pull、只读粘贴、mkdir、重命名、导入、缓存）。Linux 的 Wails 桌面进程和 MyGo 进程在 Xvfb 下都保持运行，但没有点击其中的控件。Native Shell 的 Linux 窗口在本机显示器上点过（见上）。这里没有 `TS_AUTHKEY`，也没有本地 tailscaled，因此既没有运行真实的 tsnet 加入，也没有针对真实 tailnet 运行 system 模式。详细情况和二进制大小见 `COMPARISON.md`。
+
+
+## Native Shell 批准 UI
+
+详见 [docs/NSH_UI.md](docs/NSH_UI.md)。桌面 MVP：标签页、主题、新建/重命名/删除确认、daemon 安装命令引导。Agent 新增 `POST /v1/fs/delete`。

@@ -135,6 +135,15 @@ impl Client {
         Ok(())
     }
 
+    pub fn delete(&self, node: &str, path: &str) -> Result<(), String> {
+        self.send(
+            "POST",
+            "/v1/fs/delete",
+            Some(&serde_json::json!({ "node": node, "path": path })),
+        )?;
+        Ok(())
+    }
+
     pub fn start_transfer(
         &self,
         mode: &str,

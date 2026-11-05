@@ -3,6 +3,8 @@
 //! the other shells (覆盖 / 跳过 / 对后续冲突都这样处理).
 
 use nsh_base::{button, checkbox, dialog, input, theme};
+use crate::icons;
+use crate::persist::ThemePref;
 use nsh_core::prelude::*;
 
 use crate::api::{self, job_line, mode_label, size_label};
@@ -18,11 +20,116 @@ pub fn App() -> impl IntoElement {
         .flex_1()
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
+        .child(title_row(state))
+        .child(tab_bar(state))
         .child(toolbar(state))
         .child(body(state))
+        .child(status_bar(state))
         .child(transfer_bar(state))
         .child(conflict_dialog(state))
         .child(settings_dialog(state))
+        .child(delete_dialog(state))
+        .child(daemon_dialog(state))
+}
+
+
+fn title_row(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(8.0))
+        .p(px(10.0))
+        .border_b_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().sidebar)
+        .child(text(icons::LOGO_LABEL).font_weight(FontWeight::BOLD).text_size(px(18.0)).text_color(move || theme().primary))
+        .child(text(icons::LOGO_TITLE).font_weight(FontWeight::SEMIBOLD).text_size(px(16.0)))
+        .child(text("Native Shell").text_size(px(12.0)).text_color(move || theme().muted_foreground))
+        .child(field(260.0, "http://127.0.0.1:8645", move || state.get().addr.clone(), move |text: &str| {
+            let text = text.to_owned();
+            state.update(|ui| ui.addr = text);
+        }))
+        .child(cmd("刷新", false, move || model::refresh(state)))
+        .child(cmd("设置", false, move || model::open_settings(state)))
+        .child(cmd_label(
+            move || format!("主题·{}", state.get().theme.label()),
+            move || {
+                let next = match state.get().theme {
+                    ThemePref::System => ThemePref::Light,
+                    ThemePref::Light => ThemePref::Dark,
+                    ThemePref::Dark => ThemePref::System,
+                };
+                model::set_theme(state, next);
+            },
+        ))
+        .child(
+            text(move || state.get().status.clone())
+                .flex_1()
+                .text_size(px(12.0))
+                .text_color(move || theme().muted_foreground)
+                .number_of_lines(1),
+        )
+}
+
+fn tab_bar(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(4.0))
+        .px(px(8.0))
+        .py(px(6.0))
+        .border_b_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().secondary)
+        .child(scroll().flex_1().child(view().flex_row().gap(px(4.0)).child(dynamic(move || {
+            let ui = state.get();
+            ui.tabs
+                .iter()
+                .enumerate()
+                .map(|(index, tab_state)| {
+                    let title = tab_state.title(&ui.nodes);
+                    let _selected = ui.active_tab == index;
+                    cmd_label(
+                        move || title.clone(),
+                        move || model::switch_tab(state, index),
+                    )
+                })
+                .collect::<Vec<_>>()
+        }))))
+        .child(cmd("+", false, move || model::new_tab_from_current(state)))
+        .child(cmd("×", false, move || model::close_active_tab(state)))
+        .child(cmd("重开", false, move || model::reopen_closed_tab(state)))
+}
+
+fn status_bar(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .gap(px(12.0))
+        .px(px(10.0))
+        .py(px(4.0))
+        .border_t_1()
+        .border_color(move || theme().border)
+        .bg(move || theme().card)
+        .child(
+            text(move || {
+                let ui = state.get();
+                format!("{} 项 · {}", model::visible_entries(&ui).len(), ui.folder_path)
+            })
+            .text_size(px(11.0))
+            .text_color(move || theme().muted_foreground)
+            .number_of_lines(1),
+        )
+        .child(when(
+            move || state.get().clip_set,
+            move || {
+                text(move || {
+                    let ui = state.get();
+                    format!("剪贴板：{} 项 · 来自 {}", ui.clip_items.len().max(usize::from(ui.clip_set)), ui.clip_node)
+                })
+                .text_size(px(11.0))
+            },
+        ))
 }
 
 fn toolbar(state: Signal<Ui>) -> impl IntoElement {
@@ -32,8 +139,7 @@ fn toolbar(state: Signal<Ui>) -> impl IntoElement {
         .border_b_1()
         .border_color(move || theme().border)
         .bg(move || theme().card)
-        .child(toolbar_title(state))
-        .child(toolbar_actions(state))
+                .child(toolbar_actions(state))
         .child(toolbar_import(state))
         .child(when(
             move || !state.get().err.is_empty(),
@@ -53,37 +159,15 @@ fn toolbar(state: Signal<Ui>) -> impl IntoElement {
         ))
 }
 
-fn toolbar_title(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(8.0))
-        .child(text("Tailfile").font_weight(FontWeight::SEMIBOLD).text_size(px(16.0)))
-        .child(
-            text("Native Shell")
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground),
-        )
-        .child(field(280.0, "http://127.0.0.1:8645", move || state.get().addr.clone(), move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.addr = text);
-        }))
-        .child(cmd("刷新", false, move || model::refresh(state)))
-        .child(cmd("设置", false, move || model::open_settings(state)))
-        .child(
-            text(move || state.get().status.clone())
-                .flex_1()
-                .text_size(px(12.0))
-                .text_color(move || theme().muted_foreground)
-                .number_of_lines(1),
-        )
-}
 
 fn toolbar_actions(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
         .gap(px(6.0))
+        .child(cmd("←", false, move || model::nav_back(state)))
+        .child(cmd("→", false, move || model::nav_forward(state)))
+        .child(cmd("↑", false, move || model::go_up(state)))
         .child(mode_button(state, "push", "推送"))
         .child(mode_button(state, "pull", "拉取"))
         .child(
@@ -93,16 +177,23 @@ fn toolbar_actions(state: Signal<Ui>) -> impl IntoElement {
         )
         .child(cmd("复制", false, move || model::copy_selected(state)))
         .child(cmd("粘贴", false, move || model::paste(state)))
-        .child(field(140.0, "新文件夹", move || state.get().new_name.clone(), move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.new_name = text);
+        .child(cmd("清空剪贴板", false, move || model::clear_clipboard(state)))
+        .child(cmd("新建文件夹", false, move || model::begin_new_folder(state)))
+        .child(cmd("重命名", false, move || model::begin_rename(state)))
+        .child(cmd("删除", false, move || model::ask_delete(state)))
+        .child(cmd_label(
+            move || if state.get().view == "icons" { "图标".into() } else { "列表".into() },
+            move || {
+                let next = if state.get().view == "icons" { "list" } else { "icons" };
+                model::set_view(state, next);
+            },
+        ))
+        .child(field(120.0, "筛选", move || state.get().filter.clone(), move |text: &str| {
+            model::set_filter(state, text.to_owned());
         }))
-        .child(cmd("新建", false, move || model::mkdir(state)))
-        .child(field(140.0, "重命名为", move || state.get().rename_to.clone(), move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.rename_to = text);
-        }))
-        .child(cmd("重命名", false, move || model::rename(state)))
+        .child(cmd("名", false, move || model::set_sort(state, "name")))
+        .child(cmd("大小", false, move || model::set_sort(state, "size")))
+        .child(cmd("时间", false, move || model::set_sort(state, "mtime")))
         .child(cmd("缓存", false, move || model::cache_selected(state)))
         .child(cmd("显示", false, move || model::reveal_cached(state)))
         .child(cmd_label(
@@ -204,10 +295,48 @@ fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
         )
 }
 
+fn inline_editors(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .child(when(
+            move || state.get().inline_new,
+            move || {
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .p(px(8.0))
+                    .child(field(200.0, "新文件夹名", move || state.get().new_name.clone(), move |text: &str| {
+                        let text = text.to_owned();
+                        state.update(|ui| ui.new_name = text);
+                    }))
+                    .child(cmd("创建", true, move || model::mkdir(state)))
+                    .child(cmd("取消", false, move || state.update(|ui| { ui.inline_new = false; ui.name_error.clear(); })))
+                    .child(when(move || !state.get().name_error.is_empty(), move || text(move || state.get().name_error.clone()).text_size(px(12.0)).text_color(move || theme().destructive)))
+            },
+        ))
+        .child(when(
+            move || state.get().inline_rename,
+            move || {
+                view()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .p(px(8.0))
+                    .child(field(200.0, "新名称", move || state.get().rename_to.clone(), move |text: &str| {
+                        let text = text.to_owned();
+                        state.update(|ui| ui.rename_to = text);
+                    }))
+                    .child(cmd("确定", true, move || model::rename(state)))
+                    .child(cmd("取消", false, move || state.update(|ui| { ui.inline_rename = false; ui.name_error.clear(); })))
+            },
+        ))
+}
+
 fn right_pane(state: Signal<Ui>) -> impl IntoElement {
     view()
         .flex_1()
         .child(crumb(state))
+        .child(inline_editors(state))
         .child(file_list(state))
         .child(preview(state))
 }
@@ -599,6 +728,15 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                 card()
                     .w(px(460.0))
                     .child(text("设置").font_weight(FontWeight::SEMIBOLD).text_size(px(16.0)))
+                    .child(text("外观").text_size(px(12.0)).text_color(move || theme().muted_foreground))
+                    .child(
+                        view()
+                            .flex_row()
+                            .gap(px(6.0))
+                            .child(cmd("跟随系统", false, move || model::set_theme(state, ThemePref::System)))
+                            .child(cmd("浅色", false, move || model::set_theme(state, ThemePref::Light)))
+                            .child(cmd("深色", false, move || model::set_theme(state, ThemePref::Dark))),
+                    )
                     .child(text(move || net_line(&state.get())).text_size(px(13.0)))
                     .child(
                         text(move || {
@@ -633,6 +771,80 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                     ),
             ),
         )
+}
+
+
+fn delete_dialog(state: Signal<Ui>) -> impl IntoElement {
+    when(
+        move || state.get().delete_open,
+        move || {
+            dialog()
+                .close_on_escape(true)
+                .on_cancel(move || model::cancel_delete(state))
+                .child(
+                    view().flex_1().items_center().justify_center().child(
+                        card()
+                            .w(px(480.0))
+                            .child(text("确认永久删除").font_weight(FontWeight::SEMIBOLD).text_color(move || theme().destructive))
+                            .child(text(move || state.get().delete_note.clone()).text_size(px(12.0)))
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .gap(px(8.0))
+                                    .child(cmd("取消", true, move || model::cancel_delete(state)))
+                                    .child(cmd_label(
+                                        move || format!("永久删除 {} 项", state.get().delete_paths.len()),
+                                        move || model::confirm_delete(state),
+                                    )),
+                            ),
+                    ),
+                )
+        },
+    )
+}
+
+fn daemon_dialog(state: Signal<Ui>) -> impl IntoElement {
+    when(
+        move || state.get().daemon_open,
+        move || {
+            dialog()
+                .on_cancel(move || model::close_daemon_help(state))
+                .child(
+                    view().flex_1().items_center().justify_center().child(
+                        card()
+                            .w(px(520.0))
+                            .child(text(move || {
+                                state.get().daemon_guide.as_ref().map(|g| g.title.clone()).unwrap_or_else(|| "Daemon".into())
+                            }).font_weight(FontWeight::SEMIBOLD))
+                            .child(text(move || {
+                                state.get().daemon_guide.as_ref().map(|g| g.summary.clone()).unwrap_or_default()
+                            }).text_size(px(12.0)))
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .gap(px(6.0))
+                                    .child(cmd("Linux", false, move || state.update(|ui| ui.daemon_os = "linux".into())))
+                                    .child(cmd("Windows", false, move || state.update(|ui| ui.daemon_os = "windows".into())))
+                                    .child(cmd("macOS", false, move || state.update(|ui| ui.daemon_os = "macos".into()))),
+                            )
+                            .child(text(move || {
+                                let ui = state.get();
+                                ui.daemon_guide.as_ref().map(|g| crate::daemon::commands_clipboard(g, &ui.daemon_os)).unwrap_or_default()
+                            }).text_size(px(11.0)))
+                            .child(text(move || {
+                                state.get().daemon_guide.as_ref().map(|g| g.note.clone()).unwrap_or_default()
+                            }).text_size(px(11.0)).text_color(move || theme().muted_foreground))
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .gap(px(8.0))
+                                    .child(cmd("复制命令", true, move || model::copy_daemon_command(state)))
+                                    .child(cmd("关闭", false, move || model::close_daemon_help(state))),
+                            ),
+                    ),
+                )
+        },
+    )
 }
 
 fn net_line(ui: &Ui) -> String {

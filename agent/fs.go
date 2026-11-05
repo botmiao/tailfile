@@ -220,6 +220,43 @@ func (s *Server) rename(roots Roots, from, to string) error {
 	return os.Rename(src, dst)
 }
 
+
+func (s *Server) Delete(path string) error {
+	return s.deletePath(s.roots, path)
+}
+
+func (s *Server) deletePath(roots Roots, path string) error {
+	clean, err := roots.Resolve(path, true)
+	if err != nil {
+		return err
+	}
+	resolved, err := resolveExisting(clean)
+	if err != nil {
+		return err
+	}
+	if isConfiguredRoot(roots, resolved) || isConfiguredRoot(roots, clean) {
+		return errIsRoot
+	}
+	st, err := os.Lstat(clean)
+	if err != nil {
+		return err
+	}
+	if st.IsDir() {
+		return os.RemoveAll(clean)
+	}
+	return os.Remove(clean)
+}
+
+func isConfiguredRoot(roots Roots, path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range append(append([]string{}, roots.Read...), roots.Write...) {
+		if filepath.Clean(root) == path {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) ownerLogin() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

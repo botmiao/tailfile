@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Tailfile">
+  <title>Tailfile</title>
+  <style>
+    svg { color: #ea580c; }
+    @media (prefers-color-scheme: dark) { svg { color: #fb923c; } }
+  </style>
+  <!-- Dotted uppercase F on a 3x5 grid (pitch 11.5, r 4.4); the faint, smaller dot trailing the middle arm suggests motion. -->
+  <g fill="currentColor">
+    <circle cx="20.5" cy="9" r="4.4"/><circle cx="32" cy="9" r="4.4"/><circle cx="43.5" cy="9" r="4.4"/><circle cx="20.5" cy="20.5" r="4.4"/><circle cx="20.5" cy="32" r="4.4"/><circle cx="32" cy="32" r="4.4"/><circle cx="43.5" cy="32" r="2.64" opacity="0.35"/><circle cx="20.5" cy="43.5" r="4.4"/><circle cx="20.5" cy="55" r="4.4"/>
+  </g>
+</svg>

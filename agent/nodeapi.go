@@ -23,6 +23,7 @@ type NodeAPI interface {
 	Open(ctx context.Context, path string, start, end int64) (io.ReadCloser, int64, error)
 	Mkdir(ctx context.Context, path string) error
 	Rename(ctx context.Context, from, to string) error
+	Delete(ctx context.Context, path string) error
 	// StartUpload begins or resumes a partial. overwrite must be false unless
 	// the user has already chosen to replace an existing file. A matching
 	// partial (same size and mtime) resumes without overwrite.
@@ -83,6 +84,13 @@ func (d directAPI) Rename(ctx context.Context, from, to string) error {
 		return err
 	}
 	return d.s.rename(d.s.rootsFor(ctx), from, to)
+}
+
+func (d directAPI) Delete(ctx context.Context, path string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return d.s.deletePath(d.s.rootsFor(ctx), path)
 }
 
 func (d directAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error) {
@@ -231,6 +239,10 @@ func (h *httpAPI) Mkdir(ctx context.Context, path string) error {
 
 func (h *httpAPI) Rename(ctx context.Context, from, to string) error {
 	return h.do(ctx, http.MethodPost, "/v1/fs/rename", map[string]string{"from": from, "to": to}, nil, nil)
+}
+
+func (h *httpAPI) Delete(ctx context.Context, path string) error {
+	return h.do(ctx, http.MethodPost, "/v1/fs/delete", map[string]string{"path": path}, nil, nil)
 }
 
 func (h *httpAPI) StartUpload(ctx context.Context, path string, size int64, mtimeUnix int64, resumeID string, overwrite bool) (Upload, error) {
