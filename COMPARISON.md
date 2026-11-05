@@ -2,7 +2,7 @@
 
 All three shells implement the same agent calls: node tree, file list, text / image / PDF preview, push and pull paste, progress, cancel, resume, mkdir, rename, import of a local path, and cache plus reveal. The agent is shared. The difference is the window. Native Shell's PDF pane is the agent's text extract; it does not rasterize the page.
 
-Measured on Ubuntu 24.04, linux/amd64. Wails v3.0.0 and the cross-compiled sizes below are from the earlier system-tailscaled pass (`scripts/build-all.sh`, Go 1.27.3, MyGo v0.6.4) unless a row says otherwise. Native Shell numbers in the new section were taken on this machine on 2026-11-02: rustc 1.99.1, `nsh` 0.3.0 (`76fa8a7`), GTK 4.14.5, no GPU (DRI3 missing, llvmpipe). MyGo's startup and idle RSS in that section were re-measured the same day, on the same display, against the same `tailfile-agent -demo`. The older MyGo binary-size table was not regenerated.
+Measured on Ubuntu 24.04, linux/amd64. Wails v3.0.0 and the cross-compiled sizes below are from the earlier system-tailscaled pass (`scripts/build-all.sh`, Go 1.27.3, MyGo v0.6.4) unless a row says otherwise. Native Shell numbers in the new section were taken on this machine on 2026-11-02: rustc 1.99.1 (MSRV declared later as >= 1.97), `nsh` 0.3.0 (`76fa8a7`), GTK 4.14.5, no GPU (DRI3 missing, llvmpipe). MyGo's startup and idle RSS in that section were re-measured the same day, on the same display, against the same `tailfile-agent -demo`. The older MyGo binary-size table was not regenerated.
 
 Both GUIs preview a file as soon as it is selected. Neither had a way to turn that off. Each now has a Preview on / Preview off control, default on, persisted in the browser (`localStorage` key `tailfile.preview`) or, for MyGo, in `UserConfigDir/tailfile/mygo-preview`. The localhost API requires the per-start bearer, so image and PDF bytes are fetched with `Authorization` instead of a bare URL.
 
@@ -131,6 +131,8 @@ Linux WebKit / Wayland: the shell itself is GTK 3 and OpenGL, with a software fa
 Build friction: one `go build`, no cgo, no Node. The highest friction is the Go version and the fact that almost nobody has shipped a MyGo app yet. Runtime needs GTK 3 on Linux even though the compile does not.
 
 ## Native Shell 0.3.0
+
+MSRV: **rustc >= 1.97** (`rust-version = "1.97"` in `gui-nsh/Cargo.toml`; `gui-nsh/rust-toolchain.toml` pins `1.97.0`). Verified on this pass with rustc 1.99.1. Upstream `nsh-core` 0.3.0 uses features stabilized in 1.95 (`if let` guards) and 1.97 (`isolate_lowest_one`) but does not declare `rust-version`; older toolchains fail with `error[E0658]` (seen on Windows). Check with `rustc --version`; update with `rustup update stable`.
 
 The window is Rust (`gui-nsh/`), not TSX. Rust is the path the docs lead with (`nsh init --template rust`, no QuickJS in the binary). The TSX template exists and hot-reloads, but nothing in 0.3.0 showed the Rust widgets this screen needs (`view`, `text`, `input`, `scroll`, `image`, `button`, `checkbox`, `dialog`) as missing or stubbed. The Linux template compiled here on the first try. TSX was not used.
 

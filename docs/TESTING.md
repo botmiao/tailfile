@@ -4,7 +4,7 @@
 
 Windows 上请用 PowerShell，并把下文的 `./tailfile-agent` 换成 `.\tailfile-agent.exe`（构建时用 `go build -o tailfile-agent.exe ./cmd/tailfile-agent`，Go 不会自动加 `.exe`）。`~/Tailfile` 在 Windows 上是 `%USERPROFILE%\Tailfile`（PowerShell：`$HOME\Tailfile`）。
 
-Native Shell 与另外两个 GUI 读同一个 `gui-token`。agent 在第一个终端跑起来之后，在仓库根目录开第二个终端：
+Native Shell 与另外两个 GUI 读同一个 `gui-token`。构建 `gui-nsh` 需要 **rustc >= 1.97**（crate 声明 `rust-version = "1.97"`，`rust-toolchain.toml` 锁定 1.97.0；本机用 rustc 1.99.1 测过）。`nsh-core` 0.3.0 用了较新的稳定语言特性却未声明自己的 `rust-version`，Windows 上旧工具链会报 `error[E0658]`。先 `rustc --version`，不够新就 `rustup update stable`。agent 在第一个终端跑起来之后，在仓库根目录开第二个终端：
 
 ```sh
 cd gui-nsh

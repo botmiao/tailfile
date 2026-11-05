@@ -2,6 +2,7 @@
 name = "tailfile-nsh"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.97"
 publish = false
 description = "Tailfile Finder-style shell built with Native Shell (nsh)"
 license = "Apache-2.0"

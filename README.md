@@ -24,7 +24,7 @@ gui-wails / gui-mygo / gui-nsh  --localhost-->  local agent  --tailnet-->  peer 
 
 需要 **Go 1.27.3**（MyGo v0.6.4 在更旧的 Go 上无法构建）。Wails v3.0.0 要求 Go 1.26 或更新版本。如果要修改 Wails UI，前端需要 Node 22。`go.work` 把三个 Go 模块关联在一起。
 
-Native Shell 外壳是独立的 Rust crate（`gui-nsh/`），不进 `go.work`。它用 **Rust stable**（edition 2024；本机验证的是 rustc 1.99.1）和 crates.io 上的 `nsh-core` / `nsh-base` / `nsh-platform-*` **0.3.0**。`nsh` 命令行（Apache-2.0，本机安装的是 `nsh 0.3.0 (76fa8a7)`）可以 `nsh check` / `nsh run`，但日常构建用 `cargo build` 即可，不强制安装 CLI。Linux 编译需要 GTK 4 开发包。Windows 上是 Win32/Direct2D，不需要 GTK。macOS 的 AppKit 后端在 crate 里，本环境没有 Mac，没有编译也没有运行。
+Native Shell 外壳是独立的 Rust crate（`gui-nsh/`），不进 `go.work`。它要求 **rustc >= 1.97**（edition 2024；`gui-nsh/Cargo.toml` 显式声明了 `rust-version = "1.97"`，`rust-toolchain.toml` 锁定为 1.97.0，已在 rustc 1.99.1 下验证测试）和 crates.io 上的 `nsh-core` / `nsh-base` / `nsh-platform-*` **0.3.0**。依赖项 `nsh-core` 0.3.0 内部使用了 Rust 1.95 稳定的 `if let` 模式守卫以及 Rust 1.97 稳定的 `isolate_lowest_one` 特性，但未在其 package 中声明 `rust-version`；若 Windows 等平台用户使用旧于 1.97 的 Rust 工具链，会触发 `error[E0658]` 编译错误。本项目 crate 现已补全 `rust-version` 声明；用户可通过 `rustc --version` 检查版本，必要时执行 `rustup update stable` 升级。`nsh` 命令行（Apache-2.0，本机安装的是 `nsh 0.3.0 (76fa8a7)`）可以 `nsh check` / `nsh run`，但日常构建用 `cargo build` 即可，不强制安装 CLI。Linux 编译需要 GTK 4 开发包。Windows 上是 Win32/Direct2D，不需要 GTK。macOS 的 AppKit 后端在 crate 里，本环境没有 Mac，没有编译也没有运行。
 
 ## 不用 tailnet 先试一下
 
@@ -267,7 +267,7 @@ Windows（PowerShell，不需要以管理员身份运行）：
 - 缓存目录 `os.UserCacheDir()/tailfile` 在 Windows 上是 `%LocalAppData%\tailfile`；MyGo 的预览开关文件在 `%AppData%\tailfile\mygo-preview`。
 - 构建时 `-o` 要写成 `tailfile-agent.exe`、`tailfile-wails.exe`、`tailfile-mygo.exe`（见上文"不用 tailnet 先试一下"中的 PowerShell 命令）。Native Shell 用 `cargo build --release`，产物是 `gui-nsh\target\release\tailfile-nsh.exe`。
 - 先运行 `tailfile-agent.exe`，再运行 `tailfile-wails.exe`、`tailfile-mygo.exe` 或 `tailfile-nsh.exe`。
-- Native Shell 需要 [rustup](https://rustup.rs) 的 stable 工具链。不需要 GTK，也不需要先安装 `nsh` CLI。可选：`irm https://nsh.dev/install.ps1 | iex`，然后在 `gui-nsh` 里 `nsh run`（默认 agent 地址和默认状态目录；非默认目录用 `$env:TAILFILE_STATE`）。窗口是 Win32，用 Direct2D 绘制。PDF 文本预览不依赖 WebView2；本外壳没有把 PDF 交给 WebView2。
+- Native Shell 需要 [rustup](https://rustup.rs)，**rustc >= 1.97**（`gui-nsh` 声明了 `rust-version = "1.97"` 并把 `rust-toolchain.toml` 钉在 1.97.0；已在 rustc 1.99.1 验证）。旧工具链会因为 `nsh-core` 0.3.0 使用的语言特性触发 `error[E0658]`：先 `rustc --version`，不够新就 `rustup update stable`。不需要 GTK，也不需要先安装 `nsh` CLI。可选：`irm https://nsh.dev/install.ps1 | iex`，然后在 `gui-nsh` 里 `nsh run`（默认 agent 地址和默认状态目录；非默认目录用 `$env:TAILFILE_STATE`）。窗口是 Win32，用 Direct2D 绘制。PDF 文本预览不依赖 WebView2；本外壳没有把 PDF 交给 WebView2。
 
 ### macOS
 
