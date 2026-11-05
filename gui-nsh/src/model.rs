@@ -509,7 +509,6 @@ pub fn click_tree(state: Signal<Ui>, row: TreeRow) {
     click_tree_ex(state, row, false);
 }
 
-#[allow(dead_code)]
 pub fn click_tree_new_tab(state: Signal<Ui>, row: TreeRow) {
     click_tree_ex(state, row, true);
 }
@@ -594,7 +593,10 @@ pub fn activate_row(state: Signal<Ui>, index: i32) {
         select_folder(state, node, path);
         return;
     }
-    state.update(|ui| ui.selected = index);
+    state.update(|ui| {
+        ui.selected = index;
+        sync_active_tab_fields(ui);
+    });
     preview_selected(state);
 }
 
@@ -653,24 +655,55 @@ pub fn paste(state: Signal<Ui>) {
         state.update(|ui| ui.status = "请先打开目标文件夹".into());
         return;
     }
+    let mut items = ui.clip_items.clone();
+    if items.is_empty() && !ui.clip_path.is_empty() {
+        items.push((ui.clip_node.clone(), ui.clip_path.clone(), ui.clip_name.clone()));
+    }
+    if items.is_empty() {
+        state.update(|ui| ui.status = "剪贴板是空的".into());
+        return;
+    }
     let mode = ui.mode.clone();
-    let from_node = ui.clip_node.clone();
-    let from_path = ui.clip_path.clone();
     let to_node = ui.folder_node.clone();
-    let to_path = join_remote(&ui.folder_path, &ui.clip_name);
+    let to_dir = ui.folder_path.clone();
     let base = ui.addr.clone();
     let token = ui.token.clone();
+    let n = items.len();
     offload(
         state,
         move || {
-            Client::new(base, token).start_transfer(&mode, &from_node, &from_path, &to_node, &to_path)?;
-            Ok(mode)
+            let client = Client::new(base, token);
+            let mut started = 0usize;
+            let mut errors: Vec<String> = Vec::new();
+            for (from_node, from_path, name) in items {
+                let to_path = join_remote(&to_dir, &name);
+                match client.start_transfer(&mode, &from_node, &from_path, &to_node, &to_path) {
+                    Ok(_) => started += 1,
+                    Err(err) => errors.push(format!("{name}: {err}")),
+                }
+            }
+            if started == 0 {
+                return Err(if errors.is_empty() {
+                    "粘贴失败".into()
+                } else {
+                    errors.join("; ")
+                });
+            }
+            Ok((mode, started, n, errors))
         },
         |state, result| match result {
-            Ok(mode) => {
+            Ok((mode, started, total, errors)) => {
                 state.update(|ui| {
-                    ui.err.clear();
-                    ui.status = format!("已开始{} {} → {}", crate::api::mode_label(&mode), ui.clip_node, ui.folder_node);
+                    ui.err = if errors.is_empty() {
+                        String::new()
+                    } else {
+                        format!("部分失败：{}", errors.join("; "))
+                    };
+                    ui.status = format!(
+                        "已开始{} {started}/{total} 项 → {}",
+                        crate::api::mode_label(&mode),
+                        ui.folder_node
+                    );
                 });
                 poll(state);
             }
@@ -1621,7 +1654,6 @@ pub fn close_daemon_help(state: Signal<Ui>) {
     });
 }
 
-#[allow(dead_code)]
 pub fn toggle_select_path(state: Signal<Ui>, path: String) {
     state.update(|ui| {
         if let Some(pos) = ui.selected_paths.iter().position(|p| p == &path) {

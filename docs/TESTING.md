@@ -145,3 +145,12 @@ xvfb-run -a cargo run -- --help
 ```
 
 新增用例：`TestDelete*`（鉴权、根拒绝、只读、穿越/符号链接、成功删文件/目录）、`persist`/`names`/`daemon` 单元测试、`demo_mkdir_rename_delete`。
+
+## PR #3 resume verification (2026-11-06 America/Los_Angeles)
+
+- `cd agent && GOWORK=off go test -count=1 -race -timeout 180s .` — pass (incl. mkdir/rename/delete + symlink escape).
+- `cd gui-nsh && cargo test -- --test-threads=8` — 17 unit + 2 demo_agent pass.
+- Windows agent cross: `GOOS=windows GOARCH=amd64|arm64 go build` — ok.
+- Xvfb interactive smoke + ffmpeg x11grab native shots in `docs/screenshots/nsh-native/`.
+- agy `/pstack` resume: location-not-supported (`FAILED_PRECONDITION`); executor finished work.
+

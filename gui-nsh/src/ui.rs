@@ -6,6 +6,7 @@ use nsh_base::{button, checkbox, dialog, input, theme};
 use crate::icons;
 use crate::persist::ThemePref;
 use nsh_core::prelude::*;
+use nsh_core::{ContextMenuEvent, EventKind, EventPayload, PressEvent};
 
 use crate::api::{self, job_line, mode_label, size_label};
 use crate::model::{self, TreeRow, Ui};
@@ -282,7 +283,23 @@ fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
                 theme().card
             }
         })
-        .on_press(move || model::click_tree(state, row.get()))
+        .on(EventKind::Press, move |payload: &EventPayload| {
+            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+                let force_new = modifiers.ctrl || modifiers.cmd;
+                if force_new {
+                    model::click_tree_new_tab(state, row.get());
+                } else {
+                    model::click_tree(state, row.get());
+                }
+            } else {
+                model::click_tree(state, row.get());
+            }
+        })
+        .on_context_menu(move |_e: &ContextMenuEvent| {
+            // Secondary click ≈ approved middle-click "open new tab"
+            // (nsh Linux only routes primary/secondary mouse buttons).
+            model::click_tree_new_tab(state, row.get());
+        })
         .child(
             text(move || {
                 let row = row.get();
@@ -373,23 +390,82 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
         .on_file_drop(move |event: &FileDropEvent| {
             model::import_dropped(state, event.uris.clone());
         })
-        .child(file_header())
+        .child(when(
+            move || state.get().view != "icons",
+            || file_header(),
+        ))
         .child(scroll().flex_1().child(dynamic(move || -> AnyElement {
             let ui = state.get();
             if ui.folder_path.is_empty() {
                 return empty_hint("在左侧树里选择一个节点文件夹。").into_element();
             }
-            if ui.entries.is_empty() {
-                return empty_hint("这个文件夹是空的。可以把桌面上的文件拖进来导入。").into_element();
+            let rows = model::visible_entries(&ui);
+            if rows.is_empty() {
+                return empty_hint("这个文件夹是空的，或筛选无结果。可以把桌面上的文件拖进来导入。").into_element();
+            }
+            if ui.view == "icons" {
+                return view()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap(px(8.0))
+                    .p(px(10.0))
+                    .child(each(
+                        move || model::visible_entries(&state.get()),
+                        |pair| pair.1.path.clone(),
+                        move |pair, _index| file_icon(state, pair),
+                    ))
+                    .into_element();
             }
             view()
                 .child(each(
-                    move || state.get().entries.clone(),
-                    |entry| entry.path.clone(),
-                    move |entry, index| file_row(state, entry, index),
+                    move || model::visible_entries(&state.get()),
+                    |pair| pair.1.path.clone(),
+                    move |pair, _index| file_row(state, pair),
                 ))
                 .into_element()
         })))
+}
+
+fn file_icon(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+    view()
+        .w(px(96.0))
+        .h(px(100.0))
+        .gap(px(4.0))
+        .p(px(6.0))
+        .items_center()
+        .rounded(theme().radius)
+        .bg(move || {
+            let ui = state.get();
+            let (orig, entry) = pair.get();
+            let selected =
+                ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path);
+            if selected {
+                theme().accent.opacity(0.2)
+            } else {
+                theme().card
+            }
+        })
+        .border_1()
+        .border_color(move || theme().border)
+        .on(EventKind::Press, move |payload: &EventPayload| {
+            let (orig, entry) = pair.get();
+            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+                if modifiers.ctrl || modifiers.cmd {
+                    model::toggle_select_path(state, entry.path);
+                    return;
+                }
+            }
+            model::activate_row(state, orig as i32);
+        })
+        .child(
+            text(move || if pair.get().1.is_dir { "📁" } else { "📄" })
+                .text_size(px(28.0)),
+        )
+        .child(
+            text(move || pair.get().1.name.clone())
+                .text_size(px(11.0))
+                .number_of_lines(2),
+        )
 }
 
 fn empty_hint(message: &'static str) -> impl IntoElement {
@@ -417,23 +493,36 @@ fn column_label(label: &'static str) -> nsh_core::element::Text {
         .text_color(move || theme().muted_foreground)
 }
 
-fn file_row(state: Signal<Ui>, entry: ReadSignal<api::Entry>, index: ReadSignal<usize>) -> impl IntoElement {
+fn file_row(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
         .h(px(30.0))
         .px(px(12.0))
         .bg(move || {
-            if state.get().selected == index.get() as i32 {
+            let ui = state.get();
+            let (orig, entry) = pair.get();
+            let selected =
+                ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path);
+            if selected {
                 theme().accent
             } else {
                 theme().background
             }
         })
-        .on_press(move || model::activate_row(state, index.get() as i32))
+        .on(EventKind::Press, move |payload: &EventPayload| {
+            let (orig, entry) = pair.get();
+            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+                if modifiers.ctrl || modifiers.cmd {
+                    model::toggle_select_path(state, entry.path);
+                    return;
+                }
+            }
+            model::activate_row(state, orig as i32);
+        })
         .child(
             text(move || {
-                let entry = entry.get();
+                let entry = pair.get().1;
                 if entry.is_dir {
                     format!("{}/", entry.name)
                 } else {
@@ -445,13 +534,16 @@ fn file_row(state: Signal<Ui>, entry: ReadSignal<api::Entry>, index: ReadSignal<
             .number_of_lines(1),
         )
         .child(
-            text(move || size_label(entry.get().size, entry.get().is_dir))
+            text(move || {
+                let entry = pair.get().1;
+                size_label(entry.size, entry.is_dir)
+            })
                 .w(px(90.0))
                 .text_size(px(12.0))
                 .text_color(move || theme().muted_foreground),
         )
         .child(
-            text(move || format_time(&entry.get().mod_time))
+            text(move || format_time(&pair.get().1.mod_time))
                 .w(px(150.0))
                 .text_size(px(12.0))
                 .text_color(move || theme().muted_foreground),
