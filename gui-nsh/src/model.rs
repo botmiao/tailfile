@@ -324,6 +324,10 @@ pub fn boot(state: Signal<Ui>) {
     // directly from them are cancelled when the handler returns, so every
     // agent call is spawned under the component owner captured here.
     let _ = APP_OWNER.set(Owner::current());
+    // This process is only the GUI client. When the window's owner is
+    // dropped (the window closed), exit so tailfile-nsh cannot linger
+    // with no window and no tray. The agent is a different process.
+    cleanup(|| std::process::exit(0));
     restore_persist(state);
     apply_theme_pref(state.get().theme.clone());
     refresh(state);

@@ -5,6 +5,7 @@ use crate::icons::{self, path as ip};
 use crate::persist::ThemePref;
 use crate::token::{self, base_remote};
 use nsh_base::{Theme, button, checkbox, dialog, input, theme};
+use nsh_core::Cursor;
 use nsh_core::desktop::TitleBarStyle;
 use nsh_core::element::Tokens;
 use nsh_core::element::desktop::{set_title_bar, title_bar};
@@ -64,6 +65,7 @@ fn chrome_height() -> nsh_core::Points {
 /// Logo, host tabs, and theme/settings in the window's own title bar.
 /// `window_drag` moves the window; presses on tabs and buttons stay clicks.
 fn chrome(state: Signal<Ui>) -> impl IntoElement {
+    let hot_tab = signal(-1i32);
     view()
         .window_drag(true)
         .flex_row()
@@ -117,7 +119,7 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
                             .map(|(index, tab)| {
                                 let title = tab.title(&ui.nodes);
                                 let os = node_os(&ui, &tab.node);
-                                tab_chip(state, index, title, os)
+                                tab_chip(state, hot_tab, index, title, os)
                             })
                             .collect::<Vec<_>>()
                     })),
@@ -148,17 +150,38 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
         )
 }
 
-fn tab_chip(state: Signal<Ui>, index: usize, title: String, os: String) -> impl IntoElement {
+fn tab_chip(
+    state: Signal<Ui>,
+    hot_tab: Signal<i32>,
+    index: usize,
+    title: String,
+    os: String,
+) -> impl IntoElement {
     let os_for_icon = os.clone();
     view()
         .relative()
         .window_drag(false)
+        .cursor(Cursor::Pointer)
         .flex_row()
         .items_center()
         .h(move || chrome_height())
         .px(px(10.0))
         .gap(px(6.0))
         .max_w(px(240.0))
+        .bg(move || {
+            let active = state.get().active_tab == index;
+            if !active && hot_tab.get() == index as i32 {
+                theme().secondary
+            } else {
+                theme().secondary.opacity(0.0)
+            }
+        })
+        .on_hover_in(move |_: &()| hot_tab.set(index as i32))
+        .on_hover_out(move |_: &()| {
+            if hot_tab.get() == index as i32 {
+                hot_tab.set(-1);
+            }
+        })
         .child(
             view()
                 .flex_row()
@@ -231,6 +254,7 @@ fn body(state: Signal<Ui>) -> impl IntoElement {
 }
 
 fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
+    let hot = signal(String::new());
     view()
         .w(px(262.0))
         .flex_none()
@@ -262,7 +286,7 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
                     view().child(each(
                         move || model::tree_rows(&state.get()),
                         |row| row.key.clone(),
-                        move |row, _| tree_item(state, row),
+                        move |row, _| tree_item(state, hot, row),
                     ))
                 }),
             ),
@@ -276,7 +300,7 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
         )
 }
 
-fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
+fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -> impl IntoElement {
     let depth = move || px(10.0 + row.get().depth as f32 * 14.0);
     view()
         .flex_row()
@@ -287,13 +311,24 @@ fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
         .gap(px(6.0))
         .rounded_md()
         .mx(px(6.0))
+        .cursor(Cursor::Pointer)
         .bg(move || {
             let row = row.get();
             let ui = state.get();
-            if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path {
+            let current = !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path;
+            if current {
                 theme().sidebar_accent
+            } else if hot.get() == row.key {
+                theme().secondary
             } else {
                 theme().sidebar.opacity(0.0)
+            }
+        })
+        .on_hover_in(move |_: &()| hot.set(row.get().key.clone()))
+        .on_hover_out(move |_: &()| {
+            let key = row.get().key;
+            if hot.get() == key {
+                hot.set(String::new());
             }
         })
         .on(EventKind::Press, move |payload: &EventPayload| {
@@ -459,10 +494,13 @@ fn sort_btn(state: Signal<Ui>) -> impl IntoElement {
     button()
         .flex_row()
         .items_center()
+        .justify_center()
         .gap(px(4.0))
         .px(px(8.0))
-        .h(px(28.0))
+        .h(px(30.0))
         .rounded_md()
+        .cursor(Cursor::Pointer)
+        .hover(|s| s.bg(theme().secondary))
         .on_press(move || model::cycle_sort(state))
         .child(
             text(move || match state.get().sort.as_str() {
@@ -695,6 +733,7 @@ fn name_editor(state: Signal<Ui>) -> impl IntoElement {
 }
 
 fn file_list(state: Signal<Ui>) -> impl IntoElement {
+    let hot = signal(String::new());
     view()
         .flex_1()
         .min_w(px(0.0))
@@ -720,7 +759,7 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
                     .child(each(
                         move || model::visible_entries(&state.get()),
                         |pair| pair.1.path.clone(),
-                        move |pair, _| file_icon_tile(state, pair),
+                        move |pair, _| file_icon_tile(state, hot, pair),
                     ))
                     .into_element();
             }
@@ -728,7 +767,7 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
                 .child(each(
                     move || model::visible_entries(&state.get()),
                     |pair| pair.1.path.clone(),
-                    move |pair, _| file_row(state, pair),
+                    move |pair, _| file_row(state, hot, pair),
                 ))
                 .into_element()
         })))
@@ -764,16 +803,30 @@ fn row_selected(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> boo
     ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path)
 }
 
-fn file_row(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+fn file_row(
+    state: Signal<Ui>,
+    hot: Signal<String>,
+    pair: ReadSignal<(usize, api::Entry)>,
+) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
         .h(px(34.0))
+        .cursor(Cursor::Pointer)
         .bg(move || {
             if row_selected(state, pair) {
                 theme().selection()
+            } else if hot.get() == pair.get().1.path {
+                theme().secondary
             } else {
                 theme().card
+            }
+        })
+        .on_hover_in(move |_: &()| hot.set(pair.get().1.path))
+        .on_hover_out(move |_: &()| {
+            let path = pair.get().1.path;
+            if hot.get() == path {
+                hot.set(String::new());
             }
         })
         .on(EventKind::Press, move |payload: &EventPayload| {
@@ -831,7 +884,11 @@ fn file_row(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl In
         )
 }
 
-fn file_icon_tile(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> impl IntoElement {
+fn file_icon_tile(
+    state: Signal<Ui>,
+    hot: Signal<String>,
+    pair: ReadSignal<(usize, api::Entry)>,
+) -> impl IntoElement {
     view()
         .w(px(96.0))
         .h(px(104.0))
@@ -839,11 +896,21 @@ fn file_icon_tile(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> i
         .p(px(8.0))
         .items_center()
         .rounded(theme().radius)
+        .cursor(Cursor::Pointer)
         .bg(move || {
             if row_selected(state, pair) {
                 theme().selection()
+            } else if hot.get() == pair.get().1.path {
+                theme().secondary
             } else {
                 theme().card
+            }
+        })
+        .on_hover_in(move |_: &()| hot.set(pair.get().1.path))
+        .on_hover_out(move |_: &()| {
+            let path = pair.get().1.path;
+            if hot.get() == path {
+                hot.set(String::new());
             }
         })
         .border_1()
@@ -1077,7 +1144,9 @@ fn icon_btn(d: &'static str, on_press: impl Fn() + 'static) -> impl IntoElement 
         .items_center()
         .justify_center()
         .rounded_md()
+        .cursor(Cursor::Pointer)
         .bg(move || theme().secondary.opacity(0.0))
+        .hover(|s| s.bg(theme().secondary))
         .on_press(on_press)
         .child(icons::stroke_icon(d, 16.0).text_color(move || theme().foreground))
 }
@@ -1096,8 +1165,10 @@ fn tool_labeled(
         .items_center()
         .gap(px(5.0))
         .px(px(8.0))
-        .h(px(28.0))
+        .h(px(30.0))
         .rounded_md()
+        .cursor(Cursor::Pointer)
+        .hover(|s| s.bg(theme().secondary))
         .disabled(move || !enabled_dis())
         .on_press(on_press)
         .child(icons::stroke_icon(d, 15.0).text_color(move || {
@@ -1118,23 +1189,32 @@ fn tool_labeled(
 
 fn tiny_text_btn(label: &'static str, on_press: impl Fn() + 'static) -> impl IntoElement {
     button()
+        .flex_row()
+        .items_center()
+        .justify_center()
         .px(px(8.0))
-        .h(px(28.0))
+        .h(px(30.0))
         .rounded_md()
-        .bg(move || theme().secondary)
+        .cursor(Cursor::Pointer)
+        .bg(move || theme().secondary.opacity(0.0))
+        .hover(|s| s.bg(theme().secondary))
         .on_press(on_press)
         .child(
             text(label)
-                .text_size(px(12.0))
-                .text_color(move || theme().secondary_foreground),
+                .text_size(px(12.5))
+                .text_color(move || theme().foreground),
         )
 }
 
 fn seg_mode(state: Signal<Ui>, mode: &'static str, label: &'static str) -> impl IntoElement {
     button()
+        .flex_row()
+        .items_center()
+        .justify_center()
         .px(px(8.0))
-        .h(px(28.0))
+        .h(px(30.0))
         .rounded_md()
+        .cursor(Cursor::Pointer)
         .bg(move || {
             if state.get().mode == mode {
                 theme().primary
@@ -1165,6 +1245,7 @@ fn seg_icon(
         .items_center()
         .justify_center()
         .rounded_md()
+        .cursor(Cursor::Pointer)
         .bg(move || {
             if active_bg() {
                 theme().accent
@@ -1172,6 +1253,7 @@ fn seg_icon(
                 theme().secondary.opacity(0.0)
             }
         })
+        .hover(|s| s.bg(theme().secondary))
         .on_press(on_press)
         .child(icons::stroke_icon(d, 15.0).text_color(move || {
             if active_fg() {
