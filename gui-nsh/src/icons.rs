@@ -100,10 +100,11 @@ pub fn folder_icon(size: f32, filled: bool) -> CanvasView {
         let mut p = Painter::new().scale(scale, scale);
         if filled {
             p = p
-                .fill_style(rgb(0x3b82f6))
+                .fill_style(rgb(0x4f8df7))
                 .fill_svg(path::FOLDER)
-                .stroke_style(rgb(0x2563eb))
-                .line_width(1.25)
+                .stroke_style(rgb(0x1d4ed8))
+                .line_width(1.15)
+                .line_join(LineJoin::Round)
                 .stroke_svg(path::FOLDER);
         } else {
             p = p

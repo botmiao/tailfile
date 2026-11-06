@@ -533,9 +533,7 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .child(icons::status_dot(online, ro))
                     .into_element()
             } else {
-                icons::folder_icon(14.0, false)
-                    .text_color(move || theme().muted_foreground)
-                    .into_element()
+                icons::typed_file_icon(icons::FileKind::Folder, 16.0).into_element()
             }
         }))
         .child(

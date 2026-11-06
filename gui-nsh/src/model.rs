@@ -371,11 +371,122 @@ impl Drop for ExitOnWindowClose {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn apply_windows_app_icon() {
+    unsafe {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetModuleHandleW(lpModuleName: *const u16) -> *mut std::ffi::c_void;
+            fn GetCurrentProcessId() -> u32;
+        }
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn FindWindowExW(
+                hWndParent: *mut std::ffi::c_void,
+                hWndChildAfter: *mut std::ffi::c_void,
+                lpszClass: *const u16,
+                lpszWindow: *const u16,
+            ) -> *mut std::ffi::c_void;
+            fn GetWindowThreadProcessId(
+                hWnd: *mut std::ffi::c_void,
+                lpdwProcessId: *mut u32,
+            ) -> u32;
+            fn LoadImageW(
+                hInst: *mut std::ffi::c_void,
+                name: *const u16,
+                type_: u32,
+                cx: i32,
+                cy: i32,
+                fuLoad: u32,
+            ) -> *mut std::ffi::c_void;
+            fn GetSystemMetrics(nIndex: i32) -> i32;
+            fn SendNotifyMessageW(
+                hWnd: *mut std::ffi::c_void,
+                Msg: u32,
+                wParam: usize,
+                lParam: isize,
+            ) -> i32;
+        }
+        const IMAGE_ICON: u32 = 1;
+        const LR_DEFAULTSIZE: u32 = 0x0000_0040;
+        const LR_SHARED: u32 = 0x0000_8000;
+        const SM_CXICON: i32 = 11;
+        const SM_CYICON: i32 = 12;
+        const SM_CXSMICON: i32 = 49;
+        const SM_CYSMICON: i32 = 50;
+        const WM_SETICON: u32 = 0x0080;
+        const ICON_SMALL: usize = 0;
+        const ICON_BIG: usize = 1;
+
+        let hinstance = GetModuleHandleW(std::ptr::null());
+        if hinstance.is_null() {
+            return;
+        }
+        let res_id = 1usize as *const u16;
+        let big = LoadImageW(
+            hinstance,
+            res_id,
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXICON),
+            GetSystemMetrics(SM_CYICON),
+            LR_DEFAULTSIZE | LR_SHARED,
+        );
+        let small = LoadImageW(
+            hinstance,
+            res_id,
+            IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON),
+            GetSystemMetrics(SM_CYSMICON),
+            LR_DEFAULTSIZE | LR_SHARED,
+        );
+        if big.is_null() && small.is_null() {
+            return;
+        }
+        let class_name: [u16; 10] = [
+            b'N' as u16,
+            b's' as u16,
+            b'h' as u16,
+            b'W' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'd' as u16,
+            b'o' as u16,
+            b'w' as u16,
+            0,
+        ];
+        let self_pid = GetCurrentProcessId();
+        let mut hwnd = std::ptr::null_mut();
+        loop {
+            hwnd = FindWindowExW(
+                std::ptr::null_mut(),
+                hwnd,
+                class_name.as_ptr(),
+                std::ptr::null(),
+            );
+            if hwnd.is_null() {
+                break;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            if pid == self_pid {
+                if !big.is_null() {
+                    SendNotifyMessageW(hwnd, WM_SETICON, ICON_BIG, big as isize);
+                }
+                if !small.is_null() {
+                    SendNotifyMessageW(hwnd, WM_SETICON, ICON_SMALL, small as isize);
+                }
+            }
+        }
+    }
+}
+
 pub fn boot(state: Signal<Ui>) {
     // Press handlers and timers are short-lived owners. Tasks spawned
     // directly from them are cancelled when the handler returns, so every
     // agent call is spawned under the component owner captured here.
     let _ = APP_OWNER.set(Owner::current());
+    #[cfg(target_os = "windows")]
+    apply_windows_app_icon();
     // This process is only the GUI client. When the window's owner is
     // dropped (the window closed), exit so tailfile-nsh cannot linger
     // with no window and no tray. The agent is a different process.
