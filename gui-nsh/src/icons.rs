@@ -2,7 +2,7 @@
 //! Paths are ISC/MIT Lucide (24×24 viewBox); painted with stroke (or fill for logo dots).
 
 use nsh_core::SvgPaint;
-use nsh_core::canvas::{LineCap, LineJoin};
+use nsh_core::canvas::{CanvasGradient, LineCap, LineJoin};
 use nsh_core::prelude::*;
 
 pub const LOGO_LABEL: &str = "F";
@@ -287,13 +287,41 @@ pub fn type_label(kind: FileKind) -> &'static str {
     }
 }
 
-/// Orange dotted-F logo mark (matches `assets/tailfile-logo.svg` grid).
+/// Title-bar app icon. Matches `assets/tailfile-app-icon.svg`: a squircle
+/// filled with the #fb923c → #e2510b gradient, a soft top highlight, and the
+/// dotted F in warm white (`#fff8f1`), scaled to 0.74 around the tile center.
+/// The middle-arm dot is smaller and half opacity.
 pub fn logo_mark(size: f32) -> CanvasView {
     let s = size / 64.0;
     canvas(move || {
-        let color = rgb(0xea580c);
-        let mut p = Painter::new().scale(s, s).fill_style(color);
-        // 3×5 dotted F from the approved SVG (r≈4.4).
+        let tile = Bounds::from_corners(point(px(0.0), px(0.0)), point(px(64.0), px(64.0)));
+        let fill = CanvasGradient::linear(point(px(0.0), px(0.0)), point(px(64.0), px(64.0)))
+            .add_color_stop(percentage(0.0), rgb(0xfb923c))
+            .add_color_stop(percentage(1.0), rgb(0xe2510b));
+        let glow = CanvasGradient::radial(
+            point(px(19.2), px(12.8)),
+            px(0.0),
+            point(px(19.2), px(12.8)),
+            px(57.6),
+        )
+        .add_color_stop(percentage(0.0), rgb(0xffffff).opacity(0.18))
+        .add_color_stop(percentage(0.6), rgb(0xffffff).opacity(0.0));
+        let mut p = Painter::new()
+            .scale(s, s)
+            .fill_style(fill)
+            .begin_path()
+            .round_rect(tile, px(14.5))
+            .fill()
+            .save()
+            .begin_path()
+            .round_rect(tile, px(14.5))
+            .clip()
+            .fill_style(glow)
+            .fill_rect(0.0, 0.0, 64.0, 64.0)
+            .restore()
+            .translate(32.0, 32.0)
+            .scale(0.74, 0.74)
+            .translate(-32.0, -32.0);
         let dots: &[(f32, f32, f32)] = &[
             (20.5, 9.0, 4.4),
             (32.0, 9.0, 4.4),
@@ -305,14 +333,11 @@ pub fn logo_mark(size: f32) -> CanvasView {
             (20.5, 43.5, 4.4),
             (20.5, 55.0, 4.4),
         ];
+        let ink = rgb(0xfff8f1);
         for (i, &(cx, cy, r)) in dots.iter().enumerate() {
-            if i == 6 {
-                // faint trailing motion dot
-                p = p.fill_style(rgb(0xea580c).opacity(0.35));
-            } else {
-                p = p.fill_style(color);
-            }
+            let color = if i == 6 { ink.opacity(0.5) } else { ink };
             p = p
+                .fill_style(color)
                 .begin_path()
                 .arc(cx, cy, r, 0.0, std::f32::consts::TAU)
                 .close_path()

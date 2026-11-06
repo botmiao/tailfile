@@ -27,4 +27,5 @@
 - Each tab and tree node shows a Lucide-style OS glyph (laptop, four-pane Windows mark, terminal, phone) from the node's `os`. Demo nodes report macos / windows / linux.
 - Paste is disabled while the clipboard is empty. Breadcrumbs are the host plus the path under that node's read root.
 - Screenshots: `docs/screenshots/nsh-native/light-main.png`, `dark-main.png`, `delete-confirm.png`.
+- Title-bar mark is the app icon from `gui-nsh/assets/tailfile-app-icon.svg` (squircle `#fb923c`→`#e2510b`, warm-white dotted F), not the bare wordmark F.
 

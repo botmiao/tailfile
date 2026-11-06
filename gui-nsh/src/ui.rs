@@ -96,7 +96,7 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
                 .h(move || chrome_height())
                 .gap(px(8.0))
                 .pr(px(8.0))
-                .child(icons::logo_mark(20.0))
+                .child(icons::logo_mark(26.0))
                 .child(
                     text(icons::LOGO_TITLE)
                         .font_weight(FontWeight::SEMIBOLD)

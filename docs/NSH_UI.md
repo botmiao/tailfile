@@ -38,7 +38,7 @@
 
 - `ThemePref` → `set_color_scheme`（System/Light/Dark）。
 - `nsh.json` 的 `theme.cssVars` 在 `cargo run` 时经 `Root::tokens` 注入（CLI `nsh run` 自己读这份文件）。选中行用 `selection`，强调色用 `primary`（蓝）；标志 F 仍是橙色。
-- 标志为点阵 F；工具栏与 OS 标记用 Lucide 路径（Windows 为同风格的四格标记）。ISC/MIT 声明见 `icons::THIRD_PARTY_NOTICES`。资源 SVG：`gui-nsh/assets/`。
+- 标题栏标志是应用图标：圆角橙方块（`#fb923c` → `#e2510b`）加暖白点阵 F，对齐 `gui-nsh/assets/tailfile-app-icon.svg`。工具栏与 OS 标记用 Lucide 路径（Windows 为同风格的四格标记）。ISC/MIT 声明见 `icons::THIRD_PARTY_NOTICES`。
 
 ## 移动端 / 响应式计划
 
