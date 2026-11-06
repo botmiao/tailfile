@@ -7,8 +7,11 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use std::sync::Mutex;
 use tailfile_nsh::api::Client;
 use tailfile_nsh::token;
+
+static DEMO_LOCK: Mutex<()> = Mutex::new(());
 
 struct Demo {
     child: Child,
@@ -92,6 +95,7 @@ impl Drop for Demo {
 
 #[test]
 fn demo_lists_previews_copies_and_hides_the_auth_key() {
+    let _guard = DEMO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let Some(demo) = Demo::start() else {
         eprintln!("skip: go or tailfile-agent is unavailable");
         return;
@@ -202,4 +206,31 @@ fn probe_settings(demo: &Demo) -> String {
     let mut body = String::new();
     stream.read_to_string(&mut body).unwrap();
     body
+}
+
+#[test]
+fn demo_mkdir_rename_delete() {
+    let _guard = DEMO_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let Some(demo) = Demo::start() else {
+        eprintln!("skip: go or tailfile-agent is unavailable");
+        return;
+    };
+    let client = demo.client();
+    let nodes = client.nodes().expect("nodes");
+    let alpha = nodes
+        .iter()
+        .find(|n| n.name.contains("alpha") || n.id.contains("alpha"))
+        .or_else(|| nodes.iter().find(|n| !n.read_only))
+        .expect("writable node");
+    let root = alpha.read_roots.first().cloned().expect("root");
+    let folder = format!("{}/nsh-ui-test-dir", root.trim_end_matches('/'));
+    client.mkdir(&alpha.id, &folder).expect("mkdir");
+    let renamed = format!("{}/nsh-ui-test-dir-renamed", root.trim_end_matches('/'));
+    client.rename(&alpha.id, &folder, &renamed).expect("rename");
+    client.delete(&alpha.id, &renamed).expect("delete");
+    let listing = client.list(&alpha.id, &root).expect("list");
+    assert!(
+        listing.iter().all(|e| e.path != renamed && e.path != folder),
+        "deleted folder should be gone"
+    );
 }

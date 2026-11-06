@@ -120,6 +120,10 @@ func (c *Client) Rename(ctx context.Context, node, from, to string) error {
 	return c.do(ctx, http.MethodPost, "/v1/fs/rename", map[string]string{"node": node, "from": from, "to": to}, nil)
 }
 
+func (c *Client) Delete(ctx context.Context, node, path string) error {
+	return c.do(ctx, http.MethodPost, "/v1/fs/delete", map[string]string{"node": node, "path": path}, nil)
+}
+
 func (c *Client) StartTransfer(ctx context.Context, req TransferRequest) (Transfer, error) {
 	var out Transfer
 	err := c.do(ctx, http.MethodPost, "/v1/transfers", req, &out)

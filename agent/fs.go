@@ -220,6 +220,56 @@ func (s *Server) rename(roots Roots, from, to string) error {
 	return os.Rename(src, dst)
 }
 
+
+func (s *Server) Delete(path string) error {
+	return s.deletePath(s.roots, path)
+}
+
+func (s *Server) deletePath(roots Roots, path string) error {
+	clean, err := roots.Resolve(path, true)
+	if err != nil {
+		return err
+	}
+	// Re-resolve after the whitelist check so a raced symlink retarget
+	// cannot delete outside the roots: EvalSymlinks must still land inside.
+	resolved, err := resolveExisting(clean)
+	if err != nil {
+		return err
+	}
+	if isConfiguredRoot(roots, resolved) || isConfiguredRoot(roots, clean) {
+		return errIsRoot
+	}
+	if !roots.canWrite(resolved) {
+		if roots.canRead(resolved) {
+			return errReadOnly
+		}
+		return errForbidden
+	}
+	// Prefer the cleaned request path for the filesystem op so we remove
+	// a symlink itself when it sits inside a write root, not its target.
+	st, err := os.Lstat(clean)
+	if err != nil {
+		return err
+	}
+	if st.Mode()&os.ModeSymlink != 0 {
+		return os.Remove(clean)
+	}
+	if st.IsDir() {
+		return os.RemoveAll(clean)
+	}
+	return os.Remove(clean)
+}
+
+func isConfiguredRoot(roots Roots, path string) bool {
+	path = filepath.Clean(path)
+	for _, root := range append(append([]string{}, roots.Read...), roots.Write...) {
+		if filepath.Clean(root) == path {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) ownerLogin() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -22,14 +22,14 @@ func runDemo(ctx context.Context, cfg Config) error {
 		<-ctx.Done()
 		os.RemoveAll(root)
 	}()
-	specs := make([]LoopSpec, 0, 3)
-	for _, name := range []string{"alpha", "beta", "gamma"} {
+	specs := make([]LoopSpec, 0, 5)
+	for _, name := range []string{"alpha", "beta", "gamma", "pixel", "phone"} {
 		dir := filepath.Join(root, name)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		spec := LoopSpec{ID: name, Read: []string{dir}}
-		if name != "gamma" {
+		spec := LoopSpec{ID: name, Read: []string{dir}, OS: demoOS(name)}
+		if name == "alpha" || name == "beta" {
 			spec.Write = []string{dir}
 		}
 		specs = append(specs, spec)
@@ -63,8 +63,27 @@ func runDemo(ctx context.Context, cfg Config) error {
 	lb.Token = token
 	log.Printf("tailfile demo orchestrator on http://%s (owner %s)", cfg.LocalAddr, owner)
 	log.Printf("drag-out cache: %s", cacheDir)
-	log.Printf("nodes: alpha and beta accept writes; gamma is read-only")
+	log.Printf("nodes: alpha and beta accept writes; gamma, pixel, and phone are read-only")
 	return serveLocal(ctx, cfg.LocalAddr, lb.Handler())
+}
+
+// demoOS labels the fixture nodes so the GUI can show every host glyph.
+// It does not change what alpha and beta can write.
+func demoOS(name string) string {
+	switch name {
+	case "alpha":
+		return "macos"
+	case "beta":
+		return "windows"
+	case "gamma":
+		return "linux"
+	case "pixel":
+		return "android"
+	case "phone":
+		return "ios"
+	default:
+		return "linux"
+	}
 }
 
 func seedDemo(root string) error {

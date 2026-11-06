@@ -11,7 +11,7 @@ use nsh_platform_macos as platform;
 use nsh_platform_windows as platform;
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn main() -> impl std::process::Termination {
+fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     match tailfile_nsh::Launch::parse(std::env::args().skip(1)) {
         Ok(launch) => tailfile_nsh::set_launch(launch),
@@ -20,16 +20,19 @@ fn main() -> impl std::process::Termination {
             std::process::exit(2);
         }
     }
-    platform::run_app(
-        platform::AppSource::Rust(platform::Root::of::<tailfile_nsh::ui::App>()),
+    let _ = platform::run_app(
+        platform::AppSource::Rust(
+            platform::Root::of::<tailfile_nsh::ui::App>().tokens(tailfile_nsh::ui::theme_tokens()),
+        ),
         platform::AppOptions {
             title: "Tailfile".to_owned(),
             #[cfg(any(target_os = "linux", target_os = "windows"))]
             app_id: "dev.iori.tailfile.nsh".to_owned(),
-            size: (1200, 780),
+            size: (1440, 900),
             ..Default::default()
         },
-    )
+    );
+    std::process::exit(0);
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
