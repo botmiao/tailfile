@@ -346,17 +346,6 @@ fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
         )
         .child(when(
             move || {
-                row.get().is_node
-                    && !icons::os_label(&node_os(&state.get(), &row.get().node)).is_empty()
-            },
-            move || {
-                text(move || icons::os_label(&node_os(&state.get(), &row.get().node)).to_owned())
-                    .text_size(px(10.0))
-                    .text_color(move || theme().muted_foreground)
-            },
-        ))
-        .child(when(
-            move || {
                 state
                     .get()
                     .nodes
