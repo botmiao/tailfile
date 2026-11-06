@@ -88,6 +88,9 @@ fn brand_column(state: Signal<Ui>) -> impl IntoElement {
         .h(move || chrome_height())
         .flex_row()
         .items_center()
+        .bg(move || theme().sidebar)
+        .border_r_1()
+        .border_color(move || theme().sidebar_border)
         .pl(move || {
             if state.get().sidebar_collapsed {
                 px(6.0)
