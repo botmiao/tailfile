@@ -24,7 +24,7 @@
 
 - Tabs, logo, and theme/settings share one row. `set_title_bar(TitleBarStyle::Hidden)` drops the system title text; GTK/Windows/macOS window buttons stay in the insets from `title_bar()`.
 - `cargo run` injects `nsh.json` `theme.cssVars` via `Root::tokens`. Row selection uses `selection`; the left bar and the active-tab underline use `primary`. The dotted F stays orange.
-- Each tab and tree node shows a Lucide-style OS glyph (laptop, four-pane Windows mark, terminal, phone) from the node's `os`. Demo nodes report macos / windows / linux.
+- Each tab and tree node shows one of five mono silhouettes from the node's `os`: Apple, Windows flag, Tux, Android robot, iPhone. Lucide has none of those marks. Demo nodes are macos, windows, linux, android, and ios.
 - Paste is disabled while the clipboard is empty. Breadcrumbs are the host plus the path under that node's read root.
 - Screenshots: `docs/screenshots/nsh-native/light-main.png`, `dark-main.png`, `delete-confirm.png`.
 - Title-bar mark is the app icon from `gui-nsh/assets/tailfile-app-icon.svg` (squircle `#fb923c`→`#e2510b`, warm-white dotted F), not the bare wordmark F.

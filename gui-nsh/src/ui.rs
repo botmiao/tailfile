@@ -167,7 +167,7 @@ fn tab_chip(state: Signal<Ui>, index: usize, title: String, os: String) -> impl 
                 .flex_1()
                 .min_w(px(0.0))
                 .on_press(move || model::switch_tab(state, index))
-                .child(icons::os_icon(&os_for_icon, 14.0).text_color(move || {
+                .child(icons::os_icon(&os_for_icon, 16.0).text_color(move || {
                     if state.get().active_tab == index {
                         theme().primary
                     } else {
@@ -320,7 +320,7 @@ fn tree_item(state: Signal<Ui>, row: ReadSignal<TreeRow>) -> impl IntoElement {
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
-                    .child(icons::os_icon(&os, 14.0).text_color(move || theme().muted_foreground))
+                    .child(icons::os_icon(&os, 15.0).text_color(move || theme().muted_foreground))
                     .child(icons::status_dot(online, ro))
                     .into_element()
             } else {
@@ -574,7 +574,7 @@ fn breadcrumb(state: Signal<Ui>) -> impl IntoElement {
         .child(dynamic(move || {
             let ui = state.get();
             let os = node_os(&ui, &ui.folder_node);
-            icons::os_icon(&os, 14.0).text_color(move || theme().muted_foreground)
+            icons::os_icon(&os, 15.0).text_color(move || theme().muted_foreground)
         }))
         .child(
             scroll()

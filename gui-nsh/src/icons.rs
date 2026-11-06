@@ -2,7 +2,7 @@
 //! Paths are ISC/MIT Lucide (24×24 viewBox); painted with stroke (or fill for logo dots).
 
 use nsh_core::SvgPaint;
-use nsh_core::canvas::{CanvasGradient, LineCap, LineJoin};
+use nsh_core::canvas::{CanvasGradient, FillRule, LineCap, LineJoin};
 use nsh_core::prelude::*;
 
 pub const LOGO_LABEL: &str = "F";
@@ -53,6 +53,16 @@ pub mod path {
     pub const PLUS: &str = "M5 12h14M12 5v14";
     pub const X: &str = "M18 6 6 18M6 6l12 12";
     pub const ELLIPSIS: &str = "M12 12h.01M19 12h.01M5 12h.01";
+    /// Apple logo: leaf plus bitten body. One filled silhouette.
+    pub const APPLE: &str = "M16.37 12.25c-.03-2.72 2.22-4.02 2.32-4.09-1.27-1.85-3.24-2.1-3.94-2.13-1.68-.17-3.28 1-4.13 1-.86 0-2.17-.97-3.57-.94-1.83.03-3.52 1.07-4.46 2.71-1.9 3.3-.49 8.18 1.37 10.86.9 1.31 1.98 2.78 3.39 2.73 1.36-.06 1.88-.88 3.53-.88 1.64 0 2.11.88 3.55.85 1.46-.02 2.39-1.33 3.28-2.65.98-1.48 1.38-2.91 1.4-2.98-.03-.01-2.69-1.03-2.72-4.09zM14.34 4.11c.75-.91 1.25-2.17 1.11-3.43-1.07.04-2.37.71-3.14 1.62-.69.8-1.29 2.08-1.13 3.31 1.2.09 2.42-.61 3.16-1.5z";
+    /// Windows flag: four perspective panes.
+    pub const WINDOWS: &str = "M3.1 5.35 10.55 4.25 10.55 11.15 3.1 11.55Z M12.15 4.05 20.9 2.9 20.9 11.05 12.15 11.15Z M3.1 12.85 10.55 13.15 10.55 20.15 3.1 18.85Z M12.15 13.25 20.9 13.4 20.9 21.15 12.15 19.95Z";
+    /// Tux: body, belly, eyes, beak, feet. Holes use even-odd.
+    pub const TUX: &str = "M12 2.15a3.55 3.55 0 0 1 3.35 4.35c1.85.85 3.45 2.85 3.45 5.7 0 3.55-2.35 6.15-5.55 6.95l.15 1.15 1.55.15-.35 1.7h-2.15l-.25-1.45h-2.4l-.25 1.45H7.4l-.35-1.7 1.55-.15.15-1.15C5.55 18.35 3.2 15.75 3.2 12.2c0-2.85 1.6-4.85 3.45-5.7A3.55 3.55 0 0 1 12 2.15z M12 11.6a2.85 3.85 0 0 1 0 7.7 2.85 3.85 0 0 1 0-7.7z M10.15 6.35a.72.72 0 1 0 .02 0z M13.85 6.35a.72.72 0 1 0 .02 0z M16.15 7.55l2.15.55-1.85 1.15z M6.55 20.55h3.15l.35 1.55H6.9z M14.3 20.55h3.15l-.35 1.55h-3.15z";
+    /// Android robot: dome head, antennae, body, limbs; eyes are holes.
+    pub const ANDROID: &str = "M8.15 4.05 6.85 2.15l.95-.55 1.4 2.05A6.4 6.4 0 0 1 12 3.2a6.4 6.4 0 0 1 2.8.45l1.4-2.05.95.55-1.3 1.9A6.3 6.3 0 0 1 18.2 9.2V11H5.8V9.2a6.3 6.3 0 0 1 2.35-5.15z M5.6 12.2h12.8v6.15a1.7 1.7 0 0 1-1.7 1.7H7.3a1.7 1.7 0 0 1-1.7-1.7z M2.7 12.55h2.15v5.15a1.05 1.05 0 0 1-1.05 1.05H3.2a.5.5 0 0 1-.5-.5z M19.15 12.55H21.3v5.7a.5.5 0 0 1-.5.5h-.6a1.05 1.05 0 0 1-1.05-1.05z M7.7 20.35h2.35v2.15a.85.85 0 0 1-.85.85h-.65a.85.85 0 0 1-.85-.85z M13.95 20.35h2.35v2.15a.85.85 0 0 1-.85.85h-.65a.85.85 0 0 1-.85-.85z M9.15 8.15a.9.9 0 1 0 .02 0z M14.85 8.15a.9.9 0 1 0 .02 0z";
+    /// iPhone: rounded body, screen, circular home button. Holes use even-odd.
+    pub const IPHONE: &str = "M8 1.45h8a2.7 2.7 0 0 1 2.7 2.7v15.7a2.7 2.7 0 0 1-2.7 2.7H8a2.7 2.7 0 0 1-2.7-2.7V4.15A2.7 2.7 0 0 1 8 1.45z M9.15 4.15h5.7a1.15 1.15 0 0 1 1.15 1.15v9.55a1.15 1.15 0 0 1-1.15 1.15h-5.7a1.15 1.15 0 0 1-1.15-1.15V5.3a1.15 1.15 0 0 1 1.15-1.15z M12 18.55a1.2 1.2 0 1 0 .02 0z";
     /// Lucide `square-terminal`: a Linux terminal window.
     pub const SQUARE_TERMINAL: &str = "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM7 8l3 4-3 4M12 16h5";
     /// Filled document page (folded corner is a separate triangle).
@@ -181,10 +191,11 @@ pub fn typed_file_icon(kind: FileKind, size: f32) -> CanvasView {
     .flex_none()
 }
 
-/// Host OS as a Lucide-style mark in `currentColor` (theme foreground).
+/// The five host families the chrome draws. Anything else has no glyph.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OsKind {
     Mac,
+    Ios,
     Windows,
     Linux,
     Android,
@@ -193,12 +204,14 @@ pub enum OsKind {
 
 pub fn os_kind(os: &str) -> OsKind {
     let o = os.trim().to_ascii_lowercase();
-    if o.contains("mac") || o.contains("darwin") || o == "ios" {
+    if o.contains("android") {
+        OsKind::Android
+    } else if o.contains("ios") || o.contains("iphone") || o.contains("ipad") {
+        OsKind::Ios
+    } else if o.contains("mac") || o.contains("darwin") || o.contains("osx") {
         OsKind::Mac
     } else if o.contains("win") {
         OsKind::Windows
-    } else if o.contains("android") {
-        OsKind::Android
     } else if o.contains("linux") || o.contains("unix") || o.contains("bsd") {
         OsKind::Linux
     } else {
@@ -209,6 +222,7 @@ pub fn os_kind(os: &str) -> OsKind {
 pub fn os_label(os: &str) -> &'static str {
     match os_kind(os) {
         OsKind::Mac => "macOS",
+        OsKind::Ios => "iOS",
         OsKind::Windows => "Windows",
         OsKind::Linux => "Linux",
         OsKind::Android => "Android",
@@ -216,29 +230,39 @@ pub fn os_label(os: &str) -> &'static str {
     }
 }
 
-/// Neutral OS glyph. Mac is a laptop, Windows the four-pane mark, Linux a
-/// terminal, Android a phone. All follow the view's text color.
+/// Mono OS mark in the view's text color. Lucide has no Apple, Windows,
+/// Tux, or Android robot, so these are small filled silhouettes (24×24).
 pub fn os_icon(os: &str, size: f32) -> CanvasView {
     match os_kind(os) {
-        OsKind::Mac => stroke_icon(path::LAPTOP, size),
-        OsKind::Windows => windows_mark(size),
-        OsKind::Linux => stroke_icon(path::SQUARE_TERMINAL, size),
-        OsKind::Android => stroke_icon(path::SMARTPHONE, size),
-        OsKind::Other => stroke_icon(path::MONITOR, size),
+        OsKind::Mac => filled_svg(path::APPLE, size),
+        OsKind::Ios => evenodd_svg(path::IPHONE, size),
+        OsKind::Windows => filled_svg(path::WINDOWS, size),
+        OsKind::Linux => evenodd_svg(path::TUX, size),
+        OsKind::Android => evenodd_svg(path::ANDROID, size),
+        OsKind::Other => filled_svg("", size).w(px(0.0)).h(px(0.0)),
     }
 }
 
-/// Four panes, the Windows mark, filled with currentColor.
-fn windows_mark(size: f32) -> CanvasView {
+fn filled_svg(d: &'static str, size: f32) -> CanvasView {
     let scale = size / 24.0;
     canvas(move || {
         Painter::new()
             .scale(scale, scale)
             .fill_style_from_view(SvgPaint::CurrentColor)
-            .fill_rect(3.0, 3.0, 7.6, 7.6)
-            .fill_rect(13.4, 3.0, 7.6, 7.6)
-            .fill_rect(3.0, 13.4, 7.6, 7.6)
-            .fill_rect(13.4, 13.4, 7.6, 7.6)
+            .fill_svg(d)
+    })
+    .w(px(size))
+    .h(px(size))
+    .flex_none()
+}
+
+fn evenodd_svg(d: &'static str, size: f32) -> CanvasView {
+    let scale = size / 24.0;
+    canvas(move || {
+        Painter::new()
+            .scale(scale, scale)
+            .fill_style_from_view(SvgPaint::CurrentColor)
+            .fill_path(&nsh_core::canvas::svg_path(d), FillRule::EvenOdd)
     })
     .w(px(size))
     .h(px(size))
@@ -386,10 +410,13 @@ mod tests {
         assert!(matches!(file_kind("预算.xlsx", false), FileKind::Sheet));
         assert_eq!(os_kind("macOS"), OsKind::Mac);
         assert_eq!(os_kind("darwin"), OsKind::Mac);
+        assert_eq!(os_kind("iOS"), OsKind::Ios);
+        assert_eq!(os_kind("iPhone"), OsKind::Ios);
         assert_eq!(os_kind("windows"), OsKind::Windows);
         assert_eq!(os_kind("linux"), OsKind::Linux);
         assert_eq!(os_kind("android"), OsKind::Android);
         assert_eq!(os_kind("loopback"), OsKind::Other);
+        assert_eq!(os_label("ios"), "iOS");
         assert_eq!(os_label("windows"), "Windows");
     }
 }

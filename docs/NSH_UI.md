@@ -5,7 +5,7 @@
 ## 布局
 
 - 单窗格：左侧节点树常驻；右侧地址/列表 + 可开关预览。
-- 标题栏：`set_title_bar(Hidden)` 去掉系统标题文字，橙色点阵 **F**、应用名、主机标签、主题和设置画在同一行。系统窗口按钮留在 `title_bar()` 报告的左右留白里。每个标签绑定「主机 + 当前目录」，带该主机的 OS 字形（Lucide 风格、跟随主题色），当前标签为蓝色下划线。
+- 标题栏：`set_title_bar(Hidden)` 去掉系统标题文字，橙色点阵 **F**、应用名、主机标签、主题和设置画在同一行。系统窗口按钮留在 `title_bar()` 报告的左右留白里。每个标签绑定「主机 + 当前目录」，带该主机的 OS 字形（Apple / Windows 旗 / Tux / Android 机器人 / iPhone，单色跟随主题），当前标签为蓝色下划线。
 - 工具栏：新建文件夹、复制、粘贴（剪贴板空时禁用）、重命名、删除、刷新；右侧为排序与视图。后退/前进/上一级在面包屑行。推送/拉取在「更多」。
 - 状态栏：可见项数、剪贴板摘要、错误信息。
 - 设置：外观（跟随系统/浅色/深色）+ 既有 auth-key 行为。
@@ -38,7 +38,7 @@
 
 - `ThemePref` → `set_color_scheme`（System/Light/Dark）。
 - `nsh.json` 的 `theme.cssVars` 在 `cargo run` 时经 `Root::tokens` 注入（CLI `nsh run` 自己读这份文件）。选中行用 `selection`，强调色用 `primary`（蓝）；标志 F 仍是橙色。
-- 标题栏标志是应用图标：圆角橙方块（`#fb923c` → `#e2510b`）加暖白点阵 F，对齐 `gui-nsh/assets/tailfile-app-icon.svg`。工具栏与 OS 标记用 Lucide 路径（Windows 为同风格的四格标记）。ISC/MIT 声明见 `icons::THIRD_PARTY_NOTICES`。
+- 标题栏标志是应用图标：圆角橙方块（`#fb923c` → `#e2510b`）加暖白点阵 F，对齐 `gui-nsh/assets/tailfile-app-icon.svg`。工具栏用 Lucide 路径。OS 标记是五种单色剪影（Apple、Windows 旗、Tux、Android 机器人、iPhone），因为 Lucide 没有这些标志。ISC/MIT 声明见 `icons::THIRD_PARTY_NOTICES`。
 
 ## 移动端 / 响应式计划
 
