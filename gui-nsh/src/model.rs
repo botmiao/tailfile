@@ -343,7 +343,7 @@ pub fn force_exit(code: i32) -> ! {
     #[cfg(target_os = "windows")]
     unsafe {
         #[link(name = "kernel32")]
-        extern "system" {
+        unsafe extern "system" {
             fn GetCurrentProcess() -> *mut std::ffi::c_void;
             fn TerminateProcess(hProcess: *mut std::ffi::c_void, uExitCode: u32) -> i32;
         }
