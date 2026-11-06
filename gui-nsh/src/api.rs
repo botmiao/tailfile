@@ -14,6 +14,8 @@ use crate::token::{base_remote, format_size};
 pub struct NodeInfo {
     pub id: String,
     pub name: String,
+    /// Host OS as the agent reports it (`macos`, `windows`, `linux`, `android`, …).
+    pub os: String,
     pub online: bool,
     pub agent_ok: bool,
     pub self_node: bool,
@@ -173,12 +175,20 @@ impl Client {
     }
 
     pub fn cancel_transfer(&self, id: &str) -> Result<(), String> {
-        self.send("POST", &format!("/v1/transfers/{}/cancel", encode(id)), None)?;
+        self.send(
+            "POST",
+            &format!("/v1/transfers/{}/cancel", encode(id)),
+            None,
+        )?;
         Ok(())
     }
 
     pub fn resume_transfer(&self, id: &str) -> Result<(), String> {
-        self.send("POST", &format!("/v1/transfers/{}/resume", encode(id)), None)?;
+        self.send(
+            "POST",
+            &format!("/v1/transfers/{}/resume", encode(id)),
+            None,
+        )?;
         Ok(())
     }
 
@@ -188,7 +198,11 @@ impl Client {
         action: &str,
         apply_to_rest: bool,
     ) -> Result<(), String> {
-        self.answer(&format!("/v1/transfers/{}/conflict", encode(id)), action, apply_to_rest)
+        self.answer(
+            &format!("/v1/transfers/{}/conflict", encode(id)),
+            action,
+            apply_to_rest,
+        )
     }
 
     pub fn answer_job_conflict(
@@ -197,7 +211,11 @@ impl Client {
         action: &str,
         apply_to_rest: bool,
     ) -> Result<(), String> {
-        self.answer(&format!("/v1/jobs/{}/conflict", encode(id)), action, apply_to_rest)
+        self.answer(
+            &format!("/v1/jobs/{}/conflict", encode(id)),
+            action,
+            apply_to_rest,
+        )
     }
 
     fn answer(&self, path: &str, action: &str, apply_to_rest: bool) -> Result<(), String> {
@@ -222,8 +240,7 @@ impl Client {
 
     pub fn cache(&self, node: &str, path: &str) -> Result<String, String> {
         let body = serde_json::json!({ "node": node, "path": path });
-        let parsed: CacheBody =
-            parse_json(&self.send("POST", "/v1/local/cache", Some(&body))?)?;
+        let parsed: CacheBody = parse_json(&self.send("POST", "/v1/local/cache", Some(&body))?)?;
         Ok(parsed.local_path)
     }
 
@@ -244,18 +261,33 @@ impl Client {
     /// function's error text is the agent's `error` field.
     pub fn set_auth_key(&self, auth_key: &str) -> Result<AuthKeyStatus, String> {
         let body = serde_json::json!({ "authKey": auth_key });
-        Ok(parse_json::<AuthBody>(&self.send("PUT", "/v1/local/settings/authkey", Some(&body))?)?.into())
+        Ok(
+            parse_json::<AuthBody>(&self.send(
+                "PUT",
+                "/v1/local/settings/authkey",
+                Some(&body),
+            )?)?
+            .into(),
+        )
     }
 
     pub fn clear_auth_key(&self) -> Result<AuthKeyStatus, String> {
-        Ok(parse_json::<AuthBody>(&self.send("DELETE", "/v1/local/settings/authkey", None)?)?.into())
+        Ok(
+            parse_json::<AuthBody>(&self.send("DELETE", "/v1/local/settings/authkey", None)?)?
+                .into(),
+        )
     }
 
     fn get(&self, path: &str) -> Result<Vec<u8>, String> {
         self.send("GET", path, None)
     }
 
-    fn send(&self, method: &str, path: &str, body: Option<&serde_json::Value>) -> Result<Vec<u8>, String> {
+    fn send(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<Vec<u8>, String> {
         let url = format!("{}{path}", self.base);
         let auth = format!("Bearer {}", self.token);
         let agent = http_agent();
@@ -425,6 +457,8 @@ struct NodeBody {
     #[serde(default)]
     name: String,
     #[serde(default)]
+    os: String,
+    #[serde(default)]
     online: bool,
     #[serde(default, rename = "agentOK")]
     agent_ok: bool,
@@ -441,6 +475,7 @@ impl From<NodeBody> for NodeInfo {
         Self {
             id: body.id,
             name: body.name,
+            os: body.os,
             online: body.online,
             agent_ok: body.agent_ok,
             self_node: body.self_node,

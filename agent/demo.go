@@ -28,7 +28,7 @@ func runDemo(ctx context.Context, cfg Config) error {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
-		spec := LoopSpec{ID: name, Read: []string{dir}}
+		spec := LoopSpec{ID: name, Read: []string{dir}, OS: demoOS(name)}
 		if name != "gamma" {
 			spec.Write = []string{dir}
 		}
@@ -65,6 +65,22 @@ func runDemo(ctx context.Context, cfg Config) error {
 	log.Printf("drag-out cache: %s", cacheDir)
 	log.Printf("nodes: alpha and beta accept writes; gamma is read-only")
 	return serveLocal(ctx, cfg.LocalAddr, lb.Handler())
+}
+
+// demoOS gives the three fixture nodes distinct host OS marks so the GUI
+// can show a Mac, Windows, and Linux glyph. It does not change what the
+// nodes can read or write.
+func demoOS(name string) string {
+	switch name {
+	case "alpha":
+		return "macos"
+	case "beta":
+		return "windows"
+	case "gamma":
+		return "linux"
+	default:
+		return "linux"
+	}
 }
 
 func seedDemo(root string) error {

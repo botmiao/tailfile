@@ -23,6 +23,9 @@ type LoopSpec struct {
 	// Login is the identity this node presents when it calls peers.
 	// Empty uses the cluster owner.
 	Login string
+	// OS is the host OS reported on the node (`macos`, `windows`, `linux`,
+	// `android`). Empty stays `loopback`, which is what tests have always seen.
+	OS string
 }
 
 // Loopback is a set of in-process agents plus a localhost orchestrator.
@@ -43,6 +46,7 @@ type loopNode struct {
 	srv *Server
 	url string
 	rt  *peerRT
+	os  string
 }
 
 // BytesFrom reports how many request-body bytes that peer has sent.
@@ -110,7 +114,11 @@ func StartLoopback(owner string, chunk int, specs []LoopSpec) (*Loopback, error)
 		srv.whois = srv.loopbackWhoIs
 		rt := &peerRT{base: http.DefaultTransport, peer: spec.ID, bytes: &atomic.Int64{}}
 		lb.bytes[spec.ID] = rt.bytes
-		node := &loopNode{id: spec.ID, srv: srv, rt: rt}
+		osName := spec.OS
+		if osName == "" {
+			osName = "loopback"
+		}
+		node := &loopNode{id: spec.ID, srv: srv, rt: rt, os: osName}
 		lb.nodes[spec.ID] = node
 		nodes = append(nodes, node)
 		hs := httptest.NewServer(srv.TailnetHandler())
@@ -169,7 +177,7 @@ func (r loopResolver) Nodes(ctx context.Context) ([]NodeInfo, error) {
 		out = append(out, NodeInfo{
 			ID: n.id, Name: n.id, Online: true, AgentOK: true,
 			AgentURL: n.url, Login: r.lb.Owner, ReadOnly: info.ReadOnly,
-			ReadRoots: info.ReadRoots, OS: "loopback",
+			ReadRoots: info.ReadRoots, OS: n.os,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })

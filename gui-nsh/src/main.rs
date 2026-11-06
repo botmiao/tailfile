@@ -21,7 +21,9 @@ fn main() -> impl std::process::Termination {
         }
     }
     platform::run_app(
-        platform::AppSource::Rust(platform::Root::of::<tailfile_nsh::ui::App>()),
+        platform::AppSource::Rust(
+            platform::Root::of::<tailfile_nsh::ui::App>().tokens(tailfile_nsh::ui::theme_tokens()),
+        ),
         platform::AppOptions {
             title: "Tailfile".to_owned(),
             #[cfg(any(target_os = "linux", target_os = "windows"))]

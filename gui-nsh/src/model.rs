@@ -49,10 +49,20 @@ impl TabState {
         let host = nodes
             .iter()
             .find(|n| n.id == self.node)
-            .map(|n| if n.name.is_empty() { n.id.clone() } else { n.name.clone() })
+            .map(|n| {
+                if n.name.is_empty() {
+                    n.id.clone()
+                } else {
+                    n.name.clone()
+                }
+            })
             .unwrap_or_else(|| self.node.clone());
         let dir = base_remote(&self.path);
-        let dir = if dir.is_empty() { self.path.clone() } else { dir };
+        let dir = if dir.is_empty() {
+            self.path.clone()
+        } else {
+            dir
+        };
         format!("{host} › {dir}")
     }
 }
@@ -291,9 +301,6 @@ fn node_label(node: &NodeInfo) -> String {
     } else {
         node.name.clone()
     };
-    if node.read_only {
-        label.push_str("  ·  只读");
-    }
     if node.self_node {
         label.push_str("  ·  本机");
     }
@@ -304,7 +311,10 @@ fn node_label(node: &NodeInfo) -> String {
 }
 
 pub fn selected(ui: &Ui) -> Option<Entry> {
-    ui.entries.get(ui.selected.max(0) as usize).cloned().filter(|_| ui.selected >= 0)
+    ui.entries
+        .get(ui.selected.max(0) as usize)
+        .cloned()
+        .filter(|_| ui.selected >= 0)
 }
 
 static APP_OWNER: OnceLock<Owner> = OnceLock::new();
@@ -362,9 +372,11 @@ pub fn refresh(state: Signal<Ui>) {
             client.health()?;
             client.nodes()
         },
-        |state, result| match result {
+        |state, result| {
+            match result {
             Ok(nodes) => {
                 let mut open_folder = false;
+                let mut expand: Option<(String, String)> = None;
                 state.update(|ui| {
                     ui.alive = true;
                     ui.err.clear();
@@ -391,7 +403,32 @@ pub fn refresh(state: Signal<Ui>) {
                         let root = ui.folder_path.clone();
                         ensure_tab_for(ui, &id, &root, true);
                     }
+                    if !ui.folder_node.is_empty() {
+                        let id = ui.folder_node.clone();
+                        let key = node_key(&id);
+                        if !ui.open.iter().any(|item| item == &key) {
+                            ui.open.push(key);
+                        }
+                        if let Some(node) = ui.nodes.iter().find(|n| n.id == id).cloned() {
+                            let root = node
+                                .read_roots
+                                .iter()
+                                .find(|r| path_is_under(&ui.folder_path, r))
+                                .cloned()
+                                .or_else(|| node.read_roots.first().cloned());
+                            if let Some(root) = root {
+                                let opened = dir_key(&id, &root);
+                                if !ui.open.iter().any(|item| item == &opened) {
+                                    ui.open.push(opened);
+                                }
+                                expand = Some((id, root));
+                            }
+                        }
+                    }
                 });
+                if let Some((node, root)) = expand {
+                    ensure_dirs(state, node, root);
+                }
                 if open_folder || !state.get().folder_path.is_empty() {
                     load_list(state);
                 }
@@ -402,6 +439,7 @@ pub fn refresh(state: Signal<Ui>) {
                 ui.err = err;
                 ui.status = "agent 没有在运行。请先启动 tailfile-agent（或 tailfile-agent -demo），然后点刷新。".into();
             }),
+        }
         },
     );
 }
@@ -526,7 +564,13 @@ fn click_tree_ex(state: Signal<Ui>, row: TreeRow, force_new: bool) {
         }
     });
     if row.is_node {
-        if let Some(node) = state.get().nodes.iter().find(|node| node.id == row.node).cloned() {
+        if let Some(node) = state
+            .get()
+            .nodes
+            .iter()
+            .find(|node| node.id == row.node)
+            .cloned()
+        {
             if !node.agent_ok || !node.online {
                 open_daemon_help(state, node_label(&node));
             }
@@ -608,7 +652,11 @@ pub fn go_up(state: Signal<Ui>) {
         return;
     };
     let inside = ui.nodes.iter().any(|node| {
-        node.id == ui.folder_node && node.read_roots.iter().any(|root| path_is_under(&parent, root))
+        node.id == ui.folder_node
+            && node
+                .read_roots
+                .iter()
+                .any(|root| path_is_under(&parent, root))
     });
     if !inside {
         state.update(|ui| ui.status = "已在共享根目录".into());
@@ -630,7 +678,11 @@ pub fn copy_selected(state: Signal<Ui>) {
             items.push((ui.folder_node.clone(), path.clone(), name));
         }
     } else if let Some(entry) = selected(&ui) {
-        items.push((ui.folder_node.clone(), entry.path.clone(), entry.name.clone()));
+        items.push((
+            ui.folder_node.clone(),
+            entry.path.clone(),
+            entry.name.clone(),
+        ));
     } else {
         state.update(|ui| ui.status = "请先选择要复制的文件或文件夹".into());
         return;
@@ -659,7 +711,11 @@ pub fn paste(state: Signal<Ui>) {
     }
     let mut items = ui.clip_items.clone();
     if items.is_empty() && !ui.clip_path.is_empty() {
-        items.push((ui.clip_node.clone(), ui.clip_path.clone(), ui.clip_name.clone()));
+        items.push((
+            ui.clip_node.clone(),
+            ui.clip_path.clone(),
+            ui.clip_name.clone(),
+        ));
     }
     if items.is_empty() {
         state.update(|ui| ui.status = "剪贴板是空的".into());
@@ -751,7 +807,8 @@ pub fn mkdir(state: Signal<Ui>) {
                     ui.status = format!("已创建 {name}");
                     ui.inline_new = false;
                     ui.name_error.clear();
-                    ui.subdirs.retain(|(key, _)| key != &dir_key(&node, &parent));
+                    ui.subdirs
+                        .retain(|(key, _)| key != &dir_key(&node, &parent));
                 });
                 load_list(state);
                 ensure_dirs(state, node, parent);
@@ -816,7 +873,11 @@ pub fn import_typed(state: Signal<Ui>) {
 }
 
 pub fn import_dropped(state: Signal<Ui>, uris: Vec<String>) {
-    let paths: Vec<String> = uris.into_iter().map(|uri| file_uri_to_path(&uri)).filter(|path| !path.is_empty()).collect();
+    let paths: Vec<String> = uris
+        .into_iter()
+        .map(|uri| file_uri_to_path(&uri))
+        .filter(|path| !path.is_empty())
+        .collect();
     import_paths(state, paths);
 }
 
@@ -867,7 +928,8 @@ pub fn cache_selected(state: Signal<Ui>) {
     offload(
         state,
         move || Client::new(base, token).cache(&node, &path),
-        move |state, result| match result {
+        move |state, result| {
+            match result {
             Ok(local) => state.update(|ui| {
                 ui.drag_path = local.clone();
                 ui.drag_note = format!("已缓存 {name}。本机路径：{local}。Native Shell 没有把本地文件拖出到系统文件管理器的接口，请点「显示」。");
@@ -875,6 +937,7 @@ pub fn cache_selected(state: Signal<Ui>) {
                 ui.err.clear();
             }),
             Err(err) => state.update(|ui| ui.err = err),
+        }
         },
     );
 }
@@ -965,7 +1028,11 @@ fn preview_selected(state: Signal<Ui>) {
             }
             match result {
                 Ok((text, kind, image)) => state.update(|ui| {
-                    ui.preview_kind = if kind.is_empty() { ui.preview_kind.clone() } else { kind };
+                    ui.preview_kind = if kind.is_empty() {
+                        ui.preview_kind.clone()
+                    } else {
+                        kind
+                    };
                     ui.preview_text = text;
                     ui.preview_image = image;
                 }),
@@ -993,7 +1060,10 @@ pub fn poll(state: Signal<Ui>) {
             if let Ok((transfers, jobs)) = result {
                 state.update(|ui| {
                     ui.transfers = transfers;
-                    ui.imports = jobs.into_iter().filter(|job| job.mode == "import").collect();
+                    ui.imports = jobs
+                        .into_iter()
+                        .filter(|job| job.mode == "import")
+                        .collect();
                     note_conflicts(ui);
                 });
             }
@@ -1147,12 +1217,14 @@ pub fn save_auth_key(state: Signal<Ui>) {
     offload(
         state,
         move || Client::new(base, token).set_auth_key(&key),
-        |state, result| match result {
+        |state, result| {
+            match result {
             Ok(status) => state.update(|ui| {
                 ui.auth_configured = status.configured;
                 ui.settings_note = "已保存。需要重启 agent 后才会使用。界面不会回显 key。若设置了 TS_AUTHKEY，环境变量优先。".into();
             }),
             Err(err) => state.update(|ui| ui.settings_note = err),
+        }
         },
     );
 }
@@ -1174,7 +1246,6 @@ pub fn clear_auth_key(state: Signal<Ui>) {
     );
 }
 
-
 pub fn visible_entries(ui: &Ui) -> Vec<(usize, Entry)> {
     let mut rows: Vec<(usize, Entry)> = ui
         .entries
@@ -1183,7 +1254,9 @@ pub fn visible_entries(ui: &Ui) -> Vec<(usize, Entry)> {
         .enumerate()
         .filter(|(_, e)| {
             ui.filter.trim().is_empty()
-                || e.name.to_ascii_lowercase().contains(&ui.filter.trim().to_ascii_lowercase())
+                || e.name
+                    .to_ascii_lowercase()
+                    .contains(&ui.filter.trim().to_ascii_lowercase())
         })
         .collect();
     match ui.sort.as_str() {
@@ -1191,18 +1264,28 @@ pub fn visible_entries(ui: &Ui) -> Vec<(usize, Entry)> {
             b.1.is_dir
                 .cmp(&a.1.is_dir)
                 .then(a.1.size.cmp(&b.1.size))
-                .then(a.1.name.to_ascii_lowercase().cmp(&b.1.name.to_ascii_lowercase()))
+                .then(
+                    a.1.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.1.name.to_ascii_lowercase()),
+                )
         }),
         "mtime" => rows.sort_by(|a, b| {
             b.1.is_dir
                 .cmp(&a.1.is_dir)
                 .then(b.1.mod_time.cmp(&a.1.mod_time))
-                .then(a.1.name.to_ascii_lowercase().cmp(&b.1.name.to_ascii_lowercase()))
+                .then(
+                    a.1.name
+                        .to_ascii_lowercase()
+                        .cmp(&b.1.name.to_ascii_lowercase()),
+                )
         }),
         _ => rows.sort_by(|a, b| {
-            b.1.is_dir
-                .cmp(&a.1.is_dir)
-                .then(a.1.name.to_ascii_lowercase().cmp(&b.1.name.to_ascii_lowercase()))
+            b.1.is_dir.cmp(&a.1.is_dir).then(
+                a.1.name
+                    .to_ascii_lowercase()
+                    .cmp(&b.1.name.to_ascii_lowercase()),
+            )
         }),
     }
     rows
@@ -1300,7 +1383,11 @@ fn ensure_tab_for(ui: &mut Ui, node: &str, path: &str, force_new: bool) {
     if !force_new {
         if let Some(idx) = ui.tabs.iter().position(|t| t.node == node) {
             // same host: reuse most recently matching path or that tab
-            if let Some(exact) = ui.tabs.iter().position(|t| t.node == node && t.path == path) {
+            if let Some(exact) = ui
+                .tabs
+                .iter()
+                .position(|t| t.node == node && t.path == path)
+            {
                 ui.active_tab = exact;
                 return;
             }
@@ -1355,30 +1442,41 @@ pub fn switch_tab(state: Signal<Ui>, index: usize) {
 }
 
 pub fn close_active_tab(state: Signal<Ui>) {
-    let ui = state.get();
-    if ui.tabs.is_empty() {
+    close_tab(state, state.get().active_tab);
+}
+
+pub fn close_tab(state: Signal<Ui>, index: usize) {
+    let empty = state.get().tabs.is_empty();
+    if empty || index >= state.get().tabs.len() {
         return;
     }
     state.update(|ui| {
-        if ui.tabs.is_empty() {
+        if index >= ui.tabs.len() {
             return;
         }
-        let idx = ui.active_tab.min(ui.tabs.len() - 1);
-        let closed = ui.tabs.remove(idx);
+        let closed = ui.tabs.remove(index);
         ui.closed_tabs.push(closed);
         if ui.tabs.is_empty() {
             ui.folder_node.clear();
             ui.folder_path.clear();
             ui.entries.clear();
+            ui.selected = -1;
+            ui.selected_paths.clear();
             ui.active_tab = 0;
-        } else {
-            ui.active_tab = idx.min(ui.tabs.len() - 1);
+        } else if ui.active_tab == index || ui.active_tab > index {
+            if ui.active_tab > index {
+                ui.active_tab -= 1;
+            }
+            if ui.active_tab == index {
+                ui.active_tab = index.min(ui.tabs.len() - 1);
+            }
             if let Some(tab) = ui.tabs.get(ui.active_tab).cloned() {
                 ui.folder_node = tab.node;
                 ui.folder_path = tab.path;
                 ui.filter = tab.filter;
                 ui.sort = tab.sort;
                 ui.view = tab.view;
+                ui.selected = tab.selected;
             }
         }
     });
@@ -1386,6 +1484,15 @@ pub fn close_active_tab(state: Signal<Ui>) {
     if !state.get().folder_path.is_empty() {
         load_list(state);
     }
+}
+
+pub fn cycle_sort(state: Signal<Ui>) {
+    let next = match state.get().sort.as_str() {
+        "name" => "mtime",
+        "mtime" => "size",
+        _ => "name",
+    };
+    set_sort(state, next);
 }
 
 pub fn reopen_closed_tab(state: Signal<Ui>) {
@@ -1416,7 +1523,9 @@ pub fn new_tab_from_current(state: Signal<Ui>) {
 
 pub fn nav_back(state: Signal<Ui>) {
     let ui = state.get();
-    let Some(tab) = ui.tabs.get(ui.active_tab) else { return };
+    let Some(tab) = ui.tabs.get(ui.active_tab) else {
+        return;
+    };
     let Some(prev) = tab.back.last().cloned() else {
         state.update(|ui| ui.status = "没有上一页".into());
         return;
@@ -1428,7 +1537,8 @@ pub fn nav_back(state: Signal<Ui>) {
     state.update(|ui| {
         if let Some(tab) = ui.tabs.get_mut(ui.active_tab) {
             let _ = tab.back.pop();
-            tab.forward.push(format!("{}\0{}", ui.folder_node, ui.folder_path));
+            tab.forward
+                .push(format!("{}\0{}", ui.folder_node, ui.folder_path));
         }
         ui.folder_node = parts[0].to_owned();
         ui.folder_path = parts[1].to_owned();
@@ -1439,7 +1549,9 @@ pub fn nav_back(state: Signal<Ui>) {
 
 pub fn nav_forward(state: Signal<Ui>) {
     let ui = state.get();
-    let Some(tab) = ui.tabs.get(ui.active_tab) else { return };
+    let Some(tab) = ui.tabs.get(ui.active_tab) else {
+        return;
+    };
     let Some(next) = tab.forward.last().cloned() else {
         state.update(|ui| ui.status = "没有下一页".into());
         return;
@@ -1451,7 +1563,8 @@ pub fn nav_forward(state: Signal<Ui>) {
     state.update(|ui| {
         if let Some(tab) = ui.tabs.get_mut(ui.active_tab) {
             let _ = tab.forward.pop();
-            tab.back.push(format!("{}\0{}", ui.folder_node, ui.folder_path));
+            tab.back
+                .push(format!("{}\0{}", ui.folder_node, ui.folder_path));
         }
         ui.folder_node = parts[0].to_owned();
         ui.folder_path = parts[1].to_owned();
@@ -1606,7 +1719,8 @@ pub fn confirm_delete(state: Signal<Ui>) {
             Ok(n) => {
                 state.update(|ui| {
                     ui.err.clear();
-                    ui.status = format!("已永久删除 {n} 项 · {}:{}", ui.folder_node, ui.folder_path);
+                    ui.status =
+                        format!("已永久删除 {n} 项 · {}:{}", ui.folder_node, ui.folder_path);
                     ui.delete_paths.clear();
                     ui.selected = -1;
                     ui.selected_paths.clear();
@@ -1643,7 +1757,9 @@ pub fn open_daemon_help(state: Signal<Ui>, label: String) {
 
 pub fn copy_daemon_command(state: Signal<Ui>) {
     let ui = state.get();
-    let Some(guide) = ui.daemon_guide.as_ref() else { return };
+    let Some(guide) = ui.daemon_guide.as_ref() else {
+        return;
+    };
     let text = daemon::commands_clipboard(guide, &ui.daemon_os);
     set_clipboard(text);
     state.update(|ui| ui.status = "已复制安装命令到系统剪贴板".into());
@@ -1665,7 +1781,6 @@ pub fn toggle_select_path(state: Signal<Ui>, path: String) {
         }
     });
 }
-
 
 fn offload<T, F, A>(state: Signal<Ui>, work: F, apply: A)
 where
