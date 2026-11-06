@@ -13,7 +13,10 @@ use nsh_core::prelude::*;
 use nsh_core::{ContextMenuEvent, EventKind, EventPayload, PressEvent};
 
 use crate::api::{self, job_line, size_label};
-use crate::model::{self, TreeRow, Ui};
+pub mod model {
+    pub use crate::model::*;
+}
+use self::model::{TreeRow, Ui};
 use crate::token::format_time;
 
 /// Design tokens from `nsh.json`. `cargo run` does not load that file on its
@@ -65,11 +68,11 @@ fn chrome_height() -> nsh_core::Points {
 }
 
 /// Full Tailnet column. The tab strip starts at this edge.
-const SIDEBAR_W: f32 = 262.0;
+pub const SIDEBAR_W: f32 = 262.0;
 /// Collapsed rail: host icons only.
-const SIDEBAR_RAIL: f32 = 56.0;
+pub const SIDEBAR_RAIL: f32 = 56.0;
 
-fn sidebar_width(collapsed: bool) -> f32 {
+pub fn sidebar_width(collapsed: bool) -> f32 {
     if collapsed { SIDEBAR_RAIL } else { SIDEBAR_W }
 }
 
@@ -248,7 +251,6 @@ fn tab_chip(
                 .gap(px(6.0))
                 .flex_1()
                 .min_w(px(0.0))
-                .on_press(move || model::switch_tab(state, index))
                 .child(icons::os_icon(&os_for_icon, 16.0).text_color(move || {
                     if state.get().active_tab == index {
                         theme().primary
@@ -368,15 +370,11 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
                     when(
                         move || state.get().sidebar_collapsed,
                         move || {
-                            view()
-                                .pt(px(8.0))
-                                .pb(px(8.0))
-                                .gap(px(4.0))
-                                .child(each(
-                                    move || collapsed_rows(&state.get()),
-                                    |row| row.key.clone(),
-                                    move |row, _| rail_node_item(state, hot, row),
-                                ))
+                            view().pt(px(8.0)).pb(px(8.0)).gap(px(4.0)).child(each(
+                                move || collapsed_rows(&state.get()),
+                                |row| row.key.clone(),
+                                move |row, _| rail_node_item(state, hot, row),
+                            ))
                         },
                     )
                     .otherwise(move || {
@@ -401,14 +399,14 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
         ))
 }
 
-fn collapsed_rows(ui: &Ui) -> Vec<TreeRow> {
+pub fn collapsed_rows(ui: &Ui) -> Vec<TreeRow> {
     model::tree_rows(ui)
         .into_iter()
         .filter(|row| row.is_node)
         .collect()
 }
 
-fn sidebar_rows(ui: &Ui) -> Vec<TreeRow> {
+pub fn sidebar_rows(ui: &Ui) -> Vec<TreeRow> {
     if ui.sidebar_collapsed {
         collapsed_rows(ui)
     } else {
@@ -684,9 +682,15 @@ fn sort_btn(state: Signal<Ui>) -> impl IntoElement {
             .text_color(move || theme().foreground),
         )
         .child(
-            text("↑")
-                .text_size(px(11.0))
-                .text_color(move || theme().muted_foreground),
+            text(move || {
+                if state.get().sort == "mtime" {
+                    "↓"
+                } else {
+                    "↑"
+                }
+            })
+            .text_size(px(11.0))
+            .text_color(move || theme().muted_foreground),
         )
 }
 
@@ -817,6 +821,7 @@ fn crumb_view(state: Signal<Ui>, crumb: ReadSignal<Crumb>) -> impl IntoElement {
             text(move || crumb.get().label.clone())
                 .text_size(px(12.5))
                 .number_of_lines(1)
+                .cursor(Cursor::Pointer)
                 .text_color(move || {
                     if crumb.get().last {
                         theme().foreground
@@ -1351,20 +1356,41 @@ fn transfer_bar(state: Signal<Ui>) -> impl IntoElement {
                 .border_color(move || theme().border)
                 .bg(move || theme().card)
                 .child(each(
-                    move || {
-                        state
-                            .get()
-                            .transfers
-                            .iter()
-                            .map(|t| job_line(&t.job))
-                            .collect::<Vec<_>>()
-                    },
-                    |line| line.clone(),
-                    move |line, _| {
-                        text(move || line.get())
-                            .text_size(px(11.0))
-                            .text_color(move || theme().muted_foreground)
-                            .number_of_lines(1)
+                    move || state.get().transfers.clone(),
+                    |t| t.id.clone(),
+                    move |t, _| {
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                text(move || job_line(&t.get().job))
+                                    .flex_1()
+                                    .text_size(px(11.0))
+                                    .text_color(move || theme().muted_foreground)
+                                    .number_of_lines(1),
+                            )
+                            .child(when(
+                                move || {
+                                    matches!(
+                                        t.get().job.status.as_str(),
+                                        "running" | "queued" | "conflict"
+                                    )
+                                },
+                                move || {
+                                    tiny_text_btn("取消", move || {
+                                        model::cancel_transfer(state, t.get().id);
+                                    })
+                                },
+                            ))
+                            .child(when(
+                                move || matches!(t.get().job.status.as_str(), "error" | "canceled"),
+                                move || {
+                                    tiny_text_btn("重试", move || {
+                                        model::resume_transfer(state, t.get().id);
+                                    })
+                                },
+                            ))
                     },
                 ))
         },
@@ -1672,8 +1698,14 @@ fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
                 .child(
                     view()
                         .absolute()
-                        .left(move || px(state.get().ctx_x.clamp(8.0, 960.0)))
-                        .top(move || px(state.get().ctx_y.clamp(8.0, 480.0)))
+                        .left(move || {
+                            let max_x = (window().width.0 - 220.0).max(8.0);
+                            px(state.get().ctx_x.clamp(8.0, max_x))
+                        })
+                        .top(move || {
+                            let max_y = (window().height.0 - 268.0).max(8.0);
+                            px(state.get().ctx_y.clamp(8.0, max_y))
+                        })
                         .w(px(212.0))
                         .p(px(4.0))
                         .gap(px(2.0))
@@ -1730,16 +1762,10 @@ fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
                                             model::begin_rename(state);
                                         },
                                     ))
-                                    .child(ctx_item(
-                                        ip::TRASH,
-                                        "删除",
-                                        "Del",
-                                        true,
-                                        move || {
-                                            model::close_context_menu(state);
-                                            model::ask_delete(state);
-                                        },
-                                    ))
+                                    .child(ctx_item(ip::TRASH, "删除", "Del", true, move || {
+                                        model::close_context_menu(state);
+                                        model::ask_delete(state);
+                                    }))
                                     .child(ctx_divider())
                             },
                         ))
@@ -1956,17 +1982,17 @@ fn daemon_dialog(state: Signal<Ui>) -> impl IntoElement {
     )
 }
 
-#[derive(Clone, PartialEq)]
-struct Crumb {
-    key: String,
-    label: String,
-    node: String,
-    path: String,
-    sep: bool,
-    last: bool,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Crumb {
+    pub key: String,
+    pub label: String,
+    pub node: String,
+    pub path: String,
+    pub sep: bool,
+    pub last: bool,
 }
 
-fn node_os(ui: &Ui, id: &str) -> String {
+pub fn node_os(ui: &Ui, id: &str) -> String {
     ui.nodes
         .iter()
         .find(|n| n.id == id)
@@ -1974,7 +2000,7 @@ fn node_os(ui: &Ui, id: &str) -> String {
         .unwrap_or_else(|| icons::resolve_node_os("", id, id))
 }
 
-fn crumbs(ui: &Ui) -> Vec<Crumb> {
+pub fn crumbs(ui: &Ui) -> Vec<Crumb> {
     if ui.folder_node.is_empty() || ui.folder_path.is_empty() {
         return Vec::new();
     }
@@ -2039,7 +2065,7 @@ fn crumbs(ui: &Ui) -> Vec<Crumb> {
     out
 }
 
-fn net_line(ui: &Ui) -> String {
+pub fn net_line(ui: &Ui) -> String {
     let mode = if ui.net_mode.is_empty() {
         "…".to_owned()
     } else {

@@ -296,7 +296,7 @@ fn evenodd_svg(d: &'static str, size: f32) -> CanvasView {
     .flex_none()
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileKind {
     Folder,
     Text,

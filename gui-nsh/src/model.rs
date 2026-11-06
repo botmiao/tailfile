@@ -2,7 +2,6 @@
 //! Network work runs on blocking threads; signals are written back on the
 //! engine task that `spawn` polls.
 
-use std::sync::OnceLock;
 use std::time::Duration;
 
 use nsh_core::prelude::*;
@@ -17,7 +16,7 @@ use crate::token::{
 };
 use nsh_core::platform::Appearance;
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TabState {
     pub id: String,
     pub node: String,
@@ -244,7 +243,7 @@ fn default_os_hint() -> String {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeRow {
     pub key: String,
     pub depth: u32,
@@ -306,7 +305,7 @@ fn push_dir(rows: &mut Vec<TreeRow>, ui: &Ui, node: &str, path: &str, depth: u32
     }
 }
 
-fn node_label(node: &NodeInfo) -> String {
+pub fn node_label(node: &NodeInfo) -> String {
     let mut label = if node.name.is_empty() {
         node.id.clone()
     } else {
@@ -328,8 +327,24 @@ pub fn selected(ui: &Ui) -> Option<Entry> {
         .filter(|_| ui.selected >= 0)
 }
 
-static APP_OWNER: OnceLock<Owner> = OnceLock::new();
+thread_local! {
+    static APP_OWNER: std::cell::Cell<Option<Owner>> = const { std::cell::Cell::new(None) };
+    static TEST_RUNNER: std::cell::RefCell<Option<Box<dyn FnOnce(Signal<Ui>)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+pub fn set_test_runner(f: impl FnOnce(Signal<Ui>) + 'static) {
+    TEST_RUNNER.with(|slot| {
+        *slot.borrow_mut() = Some(Box::new(f));
+    });
+}
+
 static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static IN_TEST_HARNESS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn enable_test_mode() {
+    IN_TEST_HARNESS.store(true, std::sync::atomic::Ordering::SeqCst);
+}
 
 /// Terminate the process immediately without risking a Windows `ExitProcess`
 /// (`LdrShutdownProcess` / `DllMain(DLL_PROCESS_DETACH)`) deadlock when
@@ -356,18 +371,19 @@ struct ExitOnWindowClose;
 
 impl Drop for ExitOnWindowClose {
     fn drop(&mut self) {
-        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
-        if !cfg!(test) {
-            // `Runtime::drop` frees cleanups without calling their closures,
-            // so `Drop` is what actually runs when the window closes. Give
-            // `WM_DESTROY` / `run_app` a brief window to return to `main()`
-            // cleanly, then force-exit so lingering runtime / D3D / COM threads
-            // can never hang the command line.
-            std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_millis(120));
-                force_exit(0);
-            });
+        if cfg!(test) || IN_TEST_HARNESS.load(std::sync::atomic::Ordering::SeqCst) {
+            return;
         }
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
+        // `Runtime::drop` frees cleanups without calling their closures,
+        // so `Drop` is what actually runs when the window closes. Give
+        // `WM_DESTROY` / `run_app` a brief window to return to `main()`
+        // cleanly, then force-exit so lingering runtime / D3D / COM threads
+        // can never hang the command line.
+        std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(120));
+            force_exit(0);
+        });
     }
 }
 
@@ -484,7 +500,7 @@ pub fn boot(state: Signal<Ui>) {
     // Press handlers and timers are short-lived owners. Tasks spawned
     // directly from them are cancelled when the handler returns, so every
     // agent call is spawned under the component owner captured here.
-    let _ = APP_OWNER.set(Owner::current());
+    APP_OWNER.with(|c| c.set(Some(Owner::current())));
     #[cfg(target_os = "windows")]
     apply_windows_app_icon();
     // This process is only the GUI client. When the window's owner is
@@ -533,6 +549,11 @@ pub fn boot(state: Signal<Ui>) {
             mkdir(state);
         } else {
             open_selected(state);
+        }
+    });
+    on_key("f24", move |_| {
+        if let Some(run) = TEST_RUNNER.with(|slot| slot.borrow_mut().take()) {
+            run(state);
         }
     });
 }
@@ -740,8 +761,8 @@ fn click_tree_ex(state: Signal<Ui>, row: TreeRow, force_new: bool) {
     state.update(|ui| {
         if opening {
             ui.open.push(key);
-        } else if !force_new {
-            // keep expanded when focusing; only collapse on plain toggle of empty expand intent
+        } else if !force_new && !ui.sidebar_collapsed {
+            ui.open.retain(|item| item != &key);
         }
     });
     if row.is_node {
@@ -1363,7 +1384,7 @@ pub fn poll(state: Signal<Ui>) {
     );
 }
 
-fn note_conflicts(ui: &mut Ui) {
+pub fn note_conflicts(ui: &mut Ui) {
     let mut path = String::new();
     let mut kind = String::new();
     let mut id = String::new();
@@ -2081,6 +2102,33 @@ pub fn toggle_select_path(state: Signal<Ui>, path: String) {
     });
 }
 
+fn thread_blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> impl std::future::Future<Output = Result<T, String>> {
+    let slot: std::sync::Arc<
+        std::sync::Mutex<(Option<Result<T, String>>, Option<std::task::Waker>)>,
+    > = std::sync::Arc::new(std::sync::Mutex::new((None, None)));
+    let slot_thread = slot.clone();
+    std::thread::spawn(move || {
+        let res = work();
+        if let Ok(mut guard) = slot_thread.lock() {
+            guard.0 = Some(res);
+            if let Some(waker) = guard.1.take() {
+                waker.wake();
+            }
+        }
+    });
+    std::future::poll_fn(move |cx| {
+        let mut guard = slot.lock().unwrap();
+        if let Some(res) = guard.0.take() {
+            std::task::Poll::Ready(res)
+        } else {
+            guard.1 = Some(cx.waker().clone());
+            std::task::Poll::Pending
+        }
+    })
+}
+
 fn offload<T, F, A>(state: Signal<Ui>, work: F, apply: A)
 where
     T: Send + 'static,
@@ -2090,14 +2138,19 @@ where
     if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
         return;
     }
+    let in_test = cfg!(test) || IN_TEST_HARNESS.load(std::sync::atomic::Ordering::SeqCst);
     let run = move || {
         spawn(async move {
             if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
             }
-            let result = match blocking(work).await {
-                Ok(value) => value,
-                Err(err) => Err(err.to_string()),
+            let result = if in_test {
+                thread_blocking(work).await
+            } else {
+                match blocking(work).await {
+                    Ok(value) => value,
+                    Err(err) => Err(err.to_string()),
+                }
             };
             if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
                 return;
@@ -2105,7 +2158,7 @@ where
             apply(state, result);
         });
     };
-    match APP_OWNER.get() {
+    match APP_OWNER.with(|c| c.get()).filter(Owner::is_live) {
         Some(owner) => {
             owner.run(run);
         }

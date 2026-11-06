@@ -39,3 +39,6 @@ fn main() {
 fn main() {
     compile_error!("tailfile-nsh runs on Linux, Windows, and macOS");
 }
+
+#[cfg(test)]
+mod verification;
