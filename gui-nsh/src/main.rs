@@ -32,7 +32,7 @@ fn main() {
             ..Default::default()
         },
     );
-    std::process::exit(0);
+    tailfile_nsh::force_exit(0);
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]

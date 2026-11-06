@@ -12,6 +12,7 @@ pub mod token;
 pub mod ui;
 
 pub use launch::{Launch, set_launch};
+pub use model::force_exit;
 
 use nsh_core::prelude::*;
 

@@ -329,19 +329,43 @@ pub fn selected(ui: &Ui) -> Option<Entry> {
 }
 
 static APP_OWNER: OnceLock<Owner> = OnceLock::new();
+static SHUTTING_DOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Terminate the process immediately without risking a Windows `ExitProcess`
+/// (`LdrShutdownProcess` / `DllMain(DLL_PROCESS_DETACH)`) deadlock when
+/// `nsh-ui` (Direct3D 11 / DXGI / Direct2D / DirectWrite / OLE / DWM) or
+/// `nsh-tasks` / `tokio` blocking pool threads (Winsock `ureq`) hold internal
+/// loader or COM locks during teardown.
+pub fn force_exit(code: i32) -> ! {
+    use std::io::Write;
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
+    #[cfg(target_os = "windows")]
+    unsafe {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> *mut std::ffi::c_void;
+            fn TerminateProcess(hProcess: *mut std::ffi::c_void, uExitCode: u32) -> i32;
+        }
+        TerminateProcess(GetCurrentProcess(), code as u32);
+    }
+    std::process::exit(code);
+}
 
 struct ExitOnWindowClose;
 
 impl Drop for ExitOnWindowClose {
     fn drop(&mut self) {
+        SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
         if !cfg!(test) {
             // `Runtime::drop` frees cleanups without calling their closures,
-            // so `Drop` is what actually runs when the window closes. A short
-            // delay lets the UI thread finish `WM_DESTROY` / surface teardown
-            // before terminating any lingering background runtime threads.
+            // so `Drop` is what actually runs when the window closes. Give
+            // `WM_DESTROY` / `run_app` a brief window to return to `main()`
+            // cleanly, then force-exit so lingering runtime / D3D / COM threads
+            // can never hang the command line.
             std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_millis(80));
-                std::process::exit(0);
+                std::thread::sleep(Duration::from_millis(120));
+                force_exit(0);
             });
         }
     }
@@ -1952,12 +1976,21 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     A: FnOnce(Signal<Ui>, Result<T, String>) + 'static,
 {
+    if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let run = move || {
         spawn(async move {
+            if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
             let result = match blocking(work).await {
                 Ok(value) => value,
                 Err(err) => Err(err.to_string()),
             };
+            if SHUTTING_DOWN.load(std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
             apply(state, result);
         });
     };
