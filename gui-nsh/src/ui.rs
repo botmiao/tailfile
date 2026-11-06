@@ -44,6 +44,7 @@ pub fn App() -> impl IntoElement {
     // window controls' reserved insets ourselves. Native caption buttons stay.
     set_title_bar(TitleBarStyle::Hidden, Some(px(46.0)));
     view()
+        .relative()
         .flex_1()
         .bg(move || theme().background)
         .text_color(move || theme().foreground)
@@ -55,6 +56,7 @@ pub fn App() -> impl IntoElement {
         .child(settings_dialog(state))
         .child(delete_dialog(state))
         .child(daemon_dialog(state))
+        .child(context_menu_overlay(state))
 }
 
 fn chrome_height() -> nsh_core::Points {
@@ -136,6 +138,7 @@ fn brand_column(state: Signal<Ui>) -> impl IntoElement {
 /// `window_drag` moves the window; presses on tabs and buttons stay clicks.
 fn chrome(state: Signal<Ui>) -> impl IntoElement {
     let hot_tab = signal(-1i32);
+    let hot_close = signal(-1i32);
     view()
         .window_drag(true)
         .flex_row()
@@ -171,7 +174,7 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
                                 .map(|(index, tab)| {
                                     let title = tab.title(&ui.nodes);
                                     let os = node_os(&ui, &tab.node);
-                                    tab_chip(state, hot_tab, index, title, os)
+                                    tab_chip(state, hot_tab, hot_close, index, title, os)
                                 })
                                 .collect::<Vec<_>>()
                         })),
@@ -186,15 +189,16 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
                 .child(icon_btn(ip::PLUS, move || {
                     model::new_tab_from_current(state)
                 }))
-                .child(when(
-                    move || !state.get().closed_tabs.is_empty(),
-                    move || tiny_text_btn("重开", move || model::reopen_closed_tab(state)),
-                ))
                 .child(icon_btn(ip::SUN, move || {
-                    let next = match state.get().theme {
-                        ThemePref::System => ThemePref::Light,
-                        ThemePref::Light => ThemePref::Dark,
-                        ThemePref::Dark => ThemePref::System,
+                    let is_dark = match state.get().theme {
+                        ThemePref::Dark => true,
+                        ThemePref::Light => false,
+                        ThemePref::System => dark(),
+                    };
+                    let next = if is_dark {
+                        ThemePref::Light
+                    } else {
+                        ThemePref::Dark
                     };
                     model::set_theme(state, next);
                 }))
@@ -205,6 +209,7 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
 fn tab_chip(
     state: Signal<Ui>,
     hot_tab: Signal<i32>,
+    hot_close: Signal<i32>,
     index: usize,
     title: String,
     os: String,
@@ -266,14 +271,28 @@ fn tab_chip(
         )
         .child(
             view()
-                .w(px(18.0))
-                .h(px(18.0))
+                .w(px(20.0))
+                .h(px(20.0))
                 .items_center()
                 .justify_center()
                 .rounded_sm()
+                .cursor(Cursor::Pointer)
+                .bg(move || {
+                    if hot_close.get() == index as i32 {
+                        theme().muted_foreground.opacity(0.22)
+                    } else {
+                        theme().secondary.opacity(0.0)
+                    }
+                })
+                .on_hover_in(move |_: &()| hot_close.set(index as i32))
+                .on_hover_out(move |_: &()| {
+                    if hot_close.get() == index as i32 {
+                        hot_close.set(-1);
+                    }
+                })
                 .on_press(move || model::close_tab(state, index))
-                .child(icons::stroke_icon(ip::X, 11.0).text_color(move || {
-                    if state.get().active_tab == index {
+                .child(icons::stroke_icon(ip::X, 12.0).text_color(move || {
+                    if hot_close.get() == index as i32 || state.get().active_tab == index {
                         theme().foreground
                     } else {
                         theme().muted_foreground
@@ -896,36 +915,76 @@ fn file_list(state: Signal<Ui>) -> impl IntoElement {
             model::import_dropped(state, event.uris.clone());
         })
         .child(when(move || state.get().view != "icons", || file_header()))
-        .child(scroll().flex_1().child(dynamic(move || -> AnyElement {
-            let ui = state.get();
-            if ui.folder_path.is_empty() {
-                return empty_hint("在左侧树里选择一个节点文件夹。").into_element();
-            }
-            let rows = model::visible_entries(&ui);
-            if rows.is_empty() {
-                return empty_hint("这个文件夹是空的，或筛选无结果。").into_element();
-            }
-            if ui.view == "icons" {
-                return view()
-                    .flex_row()
-                    .flex_wrap()
-                    .gap(px(10.0))
-                    .p(px(12.0))
-                    .child(each(
-                        move || model::visible_entries(&state.get()),
-                        |pair| pair.1.path.clone(),
-                        move |pair, _| file_icon_tile(state, hot, pair),
-                    ))
-                    .into_element();
-            }
-            view()
-                .child(each(
-                    move || model::visible_entries(&state.get()),
-                    |pair| pair.1.path.clone(),
-                    move |pair, _| file_row(state, hot, pair),
-                ))
-                .into_element()
-        })))
+        .child(
+            scroll().flex_1().child(
+                when(
+                    move || state.get().folder_path.is_empty(),
+                    || empty_hint("在左侧树里选择一个节点文件夹。"),
+                )
+                .otherwise(move || {
+                    when(
+                        move || model::visible_entries(&state.get()).is_empty(),
+                        move || {
+                            view()
+                                .flex_1()
+                                .on_context_menu(move |e: &ContextMenuEvent| {
+                                    model::open_context_menu(
+                                        state,
+                                        -1,
+                                        e.page_position.x.0,
+                                        e.page_position.y.0,
+                                    );
+                                })
+                                .child(empty_hint("这个文件夹是空的，或筛选无结果。"))
+                        },
+                    )
+                    .otherwise(move || {
+                        when(
+                            move || state.get().view == "icons",
+                            move || {
+                                view()
+                                    .flex_row()
+                                    .flex_wrap()
+                                    .gap(px(10.0))
+                                    .p(px(12.0))
+                                    .child(each(
+                                        move || model::visible_entries(&state.get()),
+                                        |pair| pair.1.path.clone(),
+                                        move |pair, _| file_icon_tile(state, hot, pair),
+                                    ))
+                            },
+                        )
+                        .otherwise(move || {
+                            view()
+                                .child(each(
+                                    move || model::visible_entries(&state.get()),
+                                    |pair| pair.1.path.clone(),
+                                    move |pair, _| file_row(state, hot, pair),
+                                ))
+                                .child(
+                                    view()
+                                        .h(px(360.0))
+                                        .on_press(move || {
+                                            state.update(|ui| {
+                                                ui.selected = -1;
+                                                ui.selected_paths.clear();
+                                                ui.ctx_open = false;
+                                            });
+                                        })
+                                        .on_context_menu(move |e: &ContextMenuEvent| {
+                                            model::open_context_menu(
+                                                state,
+                                                -1,
+                                                e.page_position.x.0,
+                                                e.page_position.y.0,
+                                            );
+                                        }),
+                                )
+                        })
+                    })
+                }),
+            ),
+        )
         .child(when(
             move || !state.get().err.is_empty(),
             move || {
@@ -986,13 +1045,24 @@ fn file_row(
         })
         .on(EventKind::Press, move |payload: &EventPayload| {
             let (orig, entry) = pair.get();
-            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+            let mut clicks = 1u32;
+            if let EventPayload::Press(PressEvent {
+                modifiers,
+                clicks: c,
+                ..
+            }) = payload
+            {
                 if modifiers.ctrl || modifiers.cmd {
                     model::toggle_select_path(state, entry.path);
                     return;
                 }
+                clicks = (*c).max(1);
             }
-            model::activate_row(state, orig as i32);
+            model::click_row(state, orig as i32, clicks);
+        })
+        .on_context_menu(move |e: &ContextMenuEvent| {
+            let (orig, _) = pair.get();
+            model::open_context_menu(state, orig as i32, e.page_position.x.0, e.page_position.y.0);
         })
         .child(view().w(px(3.0)).h(px(34.0)).bg(move || {
             if row_selected(state, pair) {
@@ -1078,13 +1148,24 @@ fn file_icon_tile(
         })
         .on(EventKind::Press, move |payload: &EventPayload| {
             let (orig, entry) = pair.get();
-            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+            let mut clicks = 1u32;
+            if let EventPayload::Press(PressEvent {
+                modifiers,
+                clicks: c,
+                ..
+            }) = payload
+            {
                 if modifiers.ctrl || modifiers.cmd {
                     model::toggle_select_path(state, entry.path);
                     return;
                 }
+                clicks = (*c).max(1);
             }
-            model::activate_row(state, orig as i32);
+            model::click_row(state, orig as i32, clicks);
+        })
+        .on_context_menu(move |e: &ContextMenuEvent| {
+            let (orig, _) = pair.get();
+            model::open_context_menu(state, orig as i32, e.page_position.x.0, e.page_position.y.0);
         })
         .child(dynamic(move || {
             let e = pair.get().1;
@@ -1508,12 +1589,27 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
     )
     .masked(true);
     dialog()
+        .close_on_escape(true)
+        .close_on_backdrop_press(true)
         .on_cancel(move || state.update(|ui| ui.settings_open = false))
         .child(
             view().flex_1().items_center().justify_center().child(
                 card()
                     .w(px(460.0))
-                    .child(text("设置").font_weight(FontWeight::SEMIBOLD).text_size(px(16.0)))
+                    .child(
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .child(
+                                text("设置")
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_size(px(16.0))
+                                    .flex_1(),
+                            )
+                            .child(icon_btn(ip::X, move || {
+                                state.update(|ui| ui.settings_open = false);
+                            })),
+                    )
                     .child(text("外观").text_size(px(12.0)).text_color(move || theme().muted_foreground))
                     .child(
                         view()
@@ -1547,10 +1643,7 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                             .flex_row()
                             .gap(px(8.0))
                             .child(cmd("保存", true, move || model::save_auth_key(state)))
-                            .child(cmd("清除", false, move || model::clear_auth_key(state)))
-                            .child(cmd("关闭", false, move || {
-                                state.update(|ui| ui.settings_open = false);
-                            })),
+                            .child(cmd("清除", false, move || model::clear_auth_key(state))),
                     )
                     .child(when(
                         move || !state.get().settings_note.is_empty(),
@@ -1562,6 +1655,179 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                             .text_color(move || theme().muted_foreground),
                     ),
             ),
+        )
+}
+
+fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
+    when(
+        move || state.get().ctx_open,
+        move || {
+            view()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .z_index(100)
+                .on_press(move || model::close_context_menu(state))
+                .on_context_menu(move |_e: &ContextMenuEvent| model::close_context_menu(state))
+                .child(
+                    view()
+                        .absolute()
+                        .left(move || px(state.get().ctx_x.clamp(8.0, 960.0)))
+                        .top(move || px(state.get().ctx_y.clamp(8.0, 480.0)))
+                        .w(px(212.0))
+                        .p(px(4.0))
+                        .gap(px(2.0))
+                        .rounded_md()
+                        .border_1()
+                        .border_color(move || theme().border)
+                        .bg(move || theme().popover)
+                        .child(when(
+                            move || model::selected(&state.get()).is_some(),
+                            move || {
+                                view()
+                                    .gap(px(2.0))
+                                    .child(ctx_item(
+                                        ip::FOLDER,
+                                        "打开",
+                                        "Enter",
+                                        false,
+                                        move || model::open_selected(state),
+                                    ))
+                                    .child(when(
+                                        move || {
+                                            model::selected(&state.get())
+                                                .map(|e| e.is_dir)
+                                                .unwrap_or(false)
+                                        },
+                                        move || {
+                                            ctx_item(
+                                                ip::PLUS,
+                                                "在新标签页打开",
+                                                "",
+                                                false,
+                                                move || model::open_selected_new_tab(state),
+                                            )
+                                        },
+                                    ))
+                                    .child(ctx_divider())
+                                    .child(ctx_item(
+                                        ip::COPY,
+                                        "复制",
+                                        "Ctrl+C",
+                                        false,
+                                        move || {
+                                            model::close_context_menu(state);
+                                            model::copy_selected(state);
+                                        },
+                                    ))
+                                    .child(ctx_item(
+                                        ip::PENCIL,
+                                        "重命名",
+                                        "F2",
+                                        false,
+                                        move || {
+                                            model::close_context_menu(state);
+                                            model::begin_rename(state);
+                                        },
+                                    ))
+                                    .child(ctx_item(
+                                        ip::TRASH,
+                                        "删除",
+                                        "Del",
+                                        true,
+                                        move || {
+                                            model::close_context_menu(state);
+                                            model::ask_delete(state);
+                                        },
+                                    ))
+                                    .child(ctx_divider())
+                            },
+                        ))
+                        .child(ctx_item(
+                            ip::CLIPBOARD,
+                            "粘贴",
+                            "Ctrl+V",
+                            false,
+                            move || {
+                                model::close_context_menu(state);
+                                model::paste(state);
+                            },
+                        ))
+                        .child(ctx_item(
+                            ip::FOLDER_PLUS,
+                            "新建文件夹",
+                            "Ctrl+Shift+N",
+                            false,
+                            move || {
+                                model::close_context_menu(state);
+                                model::begin_new_folder(state);
+                            },
+                        ))
+                        .child(ctx_item(
+                            ip::REFRESH,
+                            "刷新",
+                            "Ctrl+R",
+                            false,
+                            move || {
+                                model::close_context_menu(state);
+                                model::refresh(state);
+                            },
+                        )),
+                )
+        },
+    )
+}
+
+fn ctx_divider() -> impl IntoElement {
+    view()
+        .h(px(1.0))
+        .my(px(2.0))
+        .mx(px(4.0))
+        .bg(move || theme().border)
+}
+
+fn ctx_item(
+    icon: &'static str,
+    label: &'static str,
+    shortcut: &'static str,
+    destructive: bool,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_center()
+        .h(px(28.0))
+        .px(px(8.0))
+        .gap(px(8.0))
+        .rounded_sm()
+        .cursor(Cursor::Pointer)
+        .hover(|s| s.bg(theme().secondary))
+        .on_press(on_press)
+        .child(icons::stroke_icon(icon, 14.0).text_color(move || {
+            if destructive {
+                theme().destructive
+            } else {
+                theme().muted_foreground
+            }
+        }))
+        .child(
+            text(label)
+                .flex_1()
+                .text_size(px(12.5))
+                .text_color(move || {
+                    if destructive {
+                        theme().destructive
+                    } else {
+                        theme().foreground
+                    }
+                }),
+        )
+        .child(
+            text(shortcut)
+                .text_size(px(11.0))
+                .text_color(move || theme().muted_foreground),
         )
 }
 

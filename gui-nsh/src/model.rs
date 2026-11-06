@@ -144,6 +144,10 @@ pub struct Ui {
     pub history_note: String,
     /// Tailnet column folded to host icons. Remembered in `nsh-ui.json`.
     pub sidebar_collapsed: bool,
+    pub ctx_open: bool,
+    pub ctx_x: f32,
+    pub ctx_y: f32,
+    pub ctx_index: i32,
 }
 
 impl Ui {
@@ -222,6 +226,10 @@ impl Ui {
             daemon_os: default_os_hint(),
             history_note: String::new(),
             sidebar_collapsed: false,
+            ctx_open: false,
+            ctx_x: 0.0,
+            ctx_y: 0.0,
+            ctx_index: -1,
         }
     }
 }
@@ -377,7 +385,20 @@ pub fn boot(state: Signal<Ui>) {
             ui.selected = -1;
             ui.delete_open = false;
             ui.daemon_open = false;
+            ui.settings_open = false;
+            ui.ctx_open = false;
+            ui.more_open = false;
         });
+    });
+    on_key("enter", move |_| {
+        let ui = state.get();
+        if ui.inline_rename {
+            rename(state);
+        } else if ui.inline_new {
+            mkdir(state);
+        } else {
+            open_selected(state);
+        }
     });
 }
 
@@ -642,33 +663,131 @@ pub fn select_folder(state: Signal<Ui>, node: String, path: String) {
     load_list(state);
 }
 
-pub fn activate_row(state: Signal<Ui>, index: i32) {
+pub fn select_row(state: Signal<Ui>, index: i32) {
+    state.update(|ui| {
+        ui.selected = index;
+        ui.selected_paths.clear();
+        ui.ctx_open = false;
+        sync_active_tab_fields(ui);
+    });
+    preview_selected(state);
+}
+
+pub fn enter_row_dir(state: Signal<Ui>, index: i32) {
     let ui = state.get();
     let Some(entry) = ui.entries.get(index as usize).cloned() else {
         return;
     };
-    if entry.is_dir && ui.selected == index {
-        let node = ui.folder_node.clone();
-        let path = entry.path.clone();
-        let key = dir_key(&node, &path);
-        state.update(|ui| {
-            if !ui.open.iter().any(|item| item == &key) {
-                ui.open.push(key.clone());
-            }
-            let parent = dir_key(&node, &ui.folder_path);
-            if !ui.open.iter().any(|item| item == &parent) {
-                ui.open.push(parent);
-            }
-        });
-        ensure_dirs(state, node.clone(), path.clone());
-        select_folder(state, node, path);
+    if !entry.is_dir {
         return;
     }
+    let node = ui.folder_node.clone();
+    let path = entry.path.clone();
+    let key = dir_key(&node, &path);
     state.update(|ui| {
-        ui.selected = index;
-        sync_active_tab_fields(ui);
+        ui.ctx_open = false;
+        if !ui.open.iter().any(|item| item == &key) {
+            ui.open.push(key.clone());
+        }
+        let parent = dir_key(&node, &ui.folder_path);
+        if !ui.open.iter().any(|item| item == &parent) {
+            ui.open.push(parent);
+        }
     });
-    preview_selected(state);
+    ensure_dirs(state, node.clone(), path.clone());
+    select_folder(state, node, path);
+}
+
+pub fn click_row(state: Signal<Ui>, index: i32, clicks: u32) {
+    use std::sync::Mutex;
+    use std::time::Instant;
+    static LAST_CLICK: Mutex<Option<(String, String, Instant)>> = Mutex::new(None);
+
+    let ui = state.get();
+    let Some(entry) = ui.entries.get(index as usize).cloned() else {
+        return;
+    };
+    let now = Instant::now();
+    let mut is_double = clicks >= 2;
+    if let Ok(mut guard) = LAST_CLICK.lock() {
+        if !is_double {
+            if let Some((prev_node, prev_path, prev_time)) = guard.as_ref() {
+                if prev_node == &ui.folder_node
+                    && prev_path == &entry.path
+                    && now.duration_since(*prev_time) <= Duration::from_millis(450)
+                {
+                    is_double = true;
+                }
+            }
+        }
+        if is_double {
+            *guard = None;
+        } else {
+            *guard = Some((ui.folder_node.clone(), entry.path.clone(), now));
+        }
+    }
+
+    if is_double && entry.is_dir {
+        enter_row_dir(state, index);
+        return;
+    }
+    select_row(state, index);
+}
+
+pub fn open_selected(state: Signal<Ui>) {
+    let ui = state.get();
+    if ui.selected < 0 {
+        return;
+    }
+    let Some(entry) = ui.entries.get(ui.selected as usize).cloned() else {
+        return;
+    };
+    state.update(|ui| ui.ctx_open = false);
+    if entry.is_dir {
+        enter_row_dir(state, ui.selected);
+    } else {
+        cache_selected(state);
+    }
+}
+
+pub fn open_selected_new_tab(state: Signal<Ui>) {
+    let ui = state.get();
+    let Some(entry) = selected(&ui) else {
+        return;
+    };
+    if !entry.is_dir {
+        return;
+    }
+    state.update(|ui| ui.ctx_open = false);
+    focus_or_open_tab(state, ui.folder_node, entry.path, true);
+}
+
+pub fn open_context_menu(state: Signal<Ui>, index: i32, x: f32, y: f32) {
+    state.update(|ui| {
+        ui.ctx_open = true;
+        ui.ctx_x = x;
+        ui.ctx_y = y;
+        ui.ctx_index = index;
+        ui.more_open = false;
+        if index >= 0 {
+            if let Some(entry) = ui.entries.get(index as usize) {
+                if !ui.selected_paths.iter().any(|p| p == &entry.path) {
+                    ui.selected_paths.clear();
+                }
+            }
+            ui.selected = index;
+            sync_active_tab_fields(ui);
+        }
+    });
+    if index >= 0 {
+        preview_selected(state);
+    }
+}
+
+pub fn close_context_menu(state: Signal<Ui>) {
+    if state.get().ctx_open {
+        state.update(|ui| ui.ctx_open = false);
+    }
 }
 
 pub fn go_up(state: Signal<Ui>) {
@@ -1068,12 +1187,21 @@ fn preview_selected(state: Signal<Ui>) {
 }
 
 pub fn poll(state: Signal<Ui>) {
-    if !state.get().alive || state.get().poll_busy {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static POLL_BUSY: AtomicBool = AtomicBool::new(false);
+
+    let ui = state.get();
+    if !ui.alive {
         return;
     }
-    let base = state.get().addr.clone();
-    let token = state.get().token.clone();
-    state.update(|ui| ui.poll_busy = true);
+    if POLL_BUSY
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return;
+    }
+    let base = ui.addr.clone();
+    let token = ui.token.clone();
     offload(
         state,
         move || {
@@ -1081,16 +1209,20 @@ pub fn poll(state: Signal<Ui>) {
             Ok((client.transfers()?, client.jobs()?))
         },
         |state, result| {
-            state.update(|ui| ui.poll_busy = false);
+            POLL_BUSY.store(false, Ordering::SeqCst);
             if let Ok((transfers, jobs)) = result {
-                state.update(|ui| {
-                    ui.transfers = transfers;
-                    ui.imports = jobs
-                        .into_iter()
-                        .filter(|job| job.mode == "import")
-                        .collect();
-                    note_conflicts(ui);
-                });
+                let imports: Vec<Job> = jobs
+                    .into_iter()
+                    .filter(|job| job.mode == "import")
+                    .collect();
+                let cur = state.get();
+                if cur.transfers != transfers || cur.imports != imports {
+                    state.update(|ui| {
+                        ui.transfers = transfers;
+                        ui.imports = imports;
+                        note_conflicts(ui);
+                    });
+                }
             }
         },
     );
