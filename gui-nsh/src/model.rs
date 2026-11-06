@@ -322,6 +322,23 @@ pub fn selected(ui: &Ui) -> Option<Entry> {
 
 static APP_OWNER: OnceLock<Owner> = OnceLock::new();
 
+struct ExitOnWindowClose;
+
+impl Drop for ExitOnWindowClose {
+    fn drop(&mut self) {
+        if !cfg!(test) {
+            // `Runtime::drop` frees cleanups without calling their closures,
+            // so `Drop` is what actually runs when the window closes. A short
+            // delay lets the UI thread finish `WM_DESTROY` / surface teardown
+            // before terminating any lingering background runtime threads.
+            std::thread::spawn(|| {
+                std::thread::sleep(Duration::from_millis(80));
+                std::process::exit(0);
+            });
+        }
+    }
+}
+
 pub fn boot(state: Signal<Ui>) {
     // Press handlers and timers are short-lived owners. Tasks spawned
     // directly from them are cancelled when the handler returns, so every
@@ -330,7 +347,8 @@ pub fn boot(state: Signal<Ui>) {
     // This process is only the GUI client. When the window's owner is
     // dropped (the window closed), exit so tailfile-nsh cannot linger
     // with no window and no tray. The agent is a different process.
-    cleanup(|| std::process::exit(0));
+    let exit_guard = ExitOnWindowClose;
+    cleanup(move || drop(exit_guard));
     restore_persist(state);
     apply_theme_pref(state.get().theme.clone());
     refresh(state);

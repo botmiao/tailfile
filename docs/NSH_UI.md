@@ -14,7 +14,7 @@
 
 - 点击节点/目录：聚焦该主机已有标签或打开新标签。
 - 节点行只显示 OS 字形、状态点和「只读」（只读节点），不再写出 macOS / Windows 等系统名。
-- 标签页从侧栏右缘开始，和文件列表对齐。标题栏里同一条竖线接到下方 Tailnet 分隔线上。Logo 栏右侧的折叠按钮把侧栏收成主机图标轨；选择记在 `nsh-ui.json` 的 `sidebarCollapsed`。
+- 标签页从侧栏右缘开始，和文件列表对齐。标题栏里同一条竖线接到下方 Tailnet 分隔线上。Logo 栏右侧的折叠按钮把侧栏收成主机图标轨；折叠后不再显示折叠按钮，点击左上角 Logo 再次展开；选择记在 `nsh-ui.json` 的 `sidebarCollapsed`。
 - 关闭窗口会结束 GUI 进程本身（没有托盘）。agent 是另一个进程，不受影响。
 - `click_tree_new_tab` 预留强制新标签（后续接 Ctrl/中键）。
 - 标签与主题持久化到 agent `state_dir/nsh-ui.json`（文件 0600，目录 0700）。

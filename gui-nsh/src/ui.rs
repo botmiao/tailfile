@@ -65,7 +65,7 @@ fn chrome_height() -> nsh_core::Points {
 /// Full Tailnet column. The tab strip starts at this edge.
 const SIDEBAR_W: f32 = 262.0;
 /// Collapsed rail: host icons only.
-const SIDEBAR_RAIL: f32 = 72.0;
+const SIDEBAR_RAIL: f32 = 56.0;
 
 fn sidebar_width(collapsed: bool) -> f32 {
     if collapsed { SIDEBAR_RAIL } else { SIDEBAR_W }
@@ -81,6 +81,8 @@ fn title_left_inset() -> nsh_core::Points {
 }
 
 /// Logo column. Its width matches the Tailnet pane so tabs begin at the divider.
+/// When collapsed, the collapse/expand icon is hidden and clicking the logo
+/// expands the left panel again.
 fn brand_column(state: Signal<Ui>) -> impl IntoElement {
     view()
         .w(move || px(sidebar_width(state.get().sidebar_collapsed)))
@@ -91,32 +93,41 @@ fn brand_column(state: Signal<Ui>) -> impl IntoElement {
         .bg(move || theme().sidebar)
         .border_r_1()
         .border_color(move || theme().sidebar_border)
-        .pl(move || {
-            if state.get().sidebar_collapsed {
-                px(6.0)
-            } else {
-                title_left_inset()
-            }
-        })
-        .pr(px(4.0))
-        .gap(px(6.0))
-        .child(icons::logo_mark(22.0))
-        .child(when(
-            move || !state.get().sidebar_collapsed,
-            || {
-                text(icons::LOGO_TITLE)
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_size(px(14.0))
-                    .flex_1()
-            },
-        ))
         .child(
             when(
                 move || state.get().sidebar_collapsed,
-                move || icon_btn(ip::PANEL_LEFT_OPEN, move || model::toggle_sidebar(state)),
+                move || {
+                    view()
+                        .flex_1()
+                        .h(move || chrome_height())
+                        .flex_row()
+                        .items_center()
+                        .justify_center()
+                        .window_drag(false)
+                        .cursor(Cursor::Pointer)
+                        .on_press(move || model::toggle_sidebar(state))
+                        .child(icons::logo_mark(22.0))
+                },
             )
             .otherwise(move || {
-                icon_btn(ip::PANEL_LEFT_CLOSE, move || model::toggle_sidebar(state))
+                view()
+                    .flex_1()
+                    .h(move || chrome_height())
+                    .flex_row()
+                    .items_center()
+                    .pl(title_left_inset)
+                    .pr(px(6.0))
+                    .gap(px(8.0))
+                    .child(icons::logo_mark(22.0))
+                    .child(
+                        text(icons::LOGO_TITLE)
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_size(px(14.0))
+                            .flex_1(),
+                    )
+                    .child(icon_btn(ip::PANEL_LEFT_CLOSE, move || {
+                        model::toggle_sidebar(state)
+                    }))
             }),
         )
 }
@@ -223,10 +234,12 @@ fn tab_chip(
                 hot_tab.set(-1);
             }
         })
+        .on_press(move || model::switch_tab(state, index))
         .child(
             view()
                 .flex_row()
                 .items_center()
+                .h(move || chrome_height())
                 .gap(px(6.0))
                 .flex_1()
                 .min_w(px(0.0))
@@ -253,8 +266,8 @@ fn tab_chip(
         )
         .child(
             view()
-                .w(px(16.0))
-                .h(px(16.0))
+                .w(px(18.0))
+                .h(px(18.0))
                 .items_center()
                 .justify_center()
                 .rounded_sm()
@@ -320,18 +333,40 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
                 when(
                     move || sidebar_rows(&state.get()).is_empty(),
                     move || {
-                        text("还没有节点")
-                            .p(px(12.0))
-                            .text_size(px(13.0))
-                            .text_color(move || theme().muted_foreground)
+                        text(move || {
+                            if state.get().sidebar_collapsed {
+                                "—"
+                            } else {
+                                "还没有节点"
+                            }
+                        })
+                        .p(px(12.0))
+                        .text_size(px(13.0))
+                        .text_color(move || theme().muted_foreground)
                     },
                 )
                 .otherwise(move || {
-                    view().child(each(
-                        move || sidebar_rows(&state.get()),
-                        |row| row.key.clone(),
-                        move |row, _| tree_item(state, hot, row),
-                    ))
+                    when(
+                        move || state.get().sidebar_collapsed,
+                        move || {
+                            view()
+                                .pt(px(8.0))
+                                .pb(px(8.0))
+                                .gap(px(4.0))
+                                .child(each(
+                                    move || collapsed_rows(&state.get()),
+                                    |row| row.key.clone(),
+                                    move |row, _| rail_node_item(state, hot, row),
+                                ))
+                        },
+                    )
+                    .otherwise(move || {
+                        view().child(each(
+                            move || model::tree_rows(&state.get()),
+                            |row| row.key.clone(),
+                            move |row, _| tree_item(state, hot, row),
+                        ))
+                    })
                 }),
             ),
         )
@@ -347,42 +382,87 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
         ))
 }
 
+fn collapsed_rows(ui: &Ui) -> Vec<TreeRow> {
+    model::tree_rows(ui)
+        .into_iter()
+        .filter(|row| row.is_node)
+        .collect()
+}
+
 fn sidebar_rows(ui: &Ui) -> Vec<TreeRow> {
-    let rows = model::tree_rows(ui);
     if ui.sidebar_collapsed {
-        rows.into_iter().filter(|row| row.is_node).collect()
+        collapsed_rows(ui)
     } else {
-        rows
+        model::tree_rows(ui)
     }
 }
 
-fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -> impl IntoElement {
-    let depth = move || {
-        if state.get().sidebar_collapsed {
-            px(0.0)
-        } else {
-            px(10.0 + row.get().depth as f32 * 14.0)
-        }
-    };
+fn rail_node_item(
+    state: Signal<Ui>,
+    hot: Signal<String>,
+    row: ReadSignal<TreeRow>,
+) -> impl IntoElement {
     view()
         .flex_row()
         .items_center()
         .justify_center()
-        .h(move || {
-            if state.get().sidebar_collapsed {
-                px(36.0)
+        .h(px(38.0))
+        .mx(px(8.0))
+        .rounded_md()
+        .cursor(Cursor::Pointer)
+        .bg(move || {
+            let row = row.get();
+            let ui = state.get();
+            if row.node == ui.folder_node {
+                theme().sidebar_accent
+            } else if hot.get() == row.key {
+                theme().secondary
             } else {
-                px(28.0)
+                theme().sidebar.opacity(0.0)
             }
         })
+        .on_hover_in(move |_: &()| hot.set(row.get().key.clone()))
+        .on_hover_out(move |_: &()| {
+            let key = row.get().key;
+            if hot.get() == key {
+                hot.set(String::new());
+            }
+        })
+        .on(EventKind::Press, move |payload: &EventPayload| {
+            if let EventPayload::Press(PressEvent { modifiers, .. }) = payload {
+                if modifiers.ctrl || modifiers.cmd {
+                    model::click_tree_new_tab(state, row.get());
+                    return;
+                }
+            }
+            model::click_tree(state, row.get());
+        })
+        .on_context_menu(move |_e: &ContextMenuEvent| {
+            model::click_tree_new_tab(state, row.get());
+        })
+        .child(dynamic(move || {
+            let row = row.get();
+            let ui = state.get();
+            let os = node_os(&ui, &row.node);
+            let active = row.node == ui.folder_node;
+            icons::os_icon(&os, 18.0).text_color(move || {
+                if active {
+                    theme().sidebar_accent_foreground
+                } else {
+                    theme().sidebar_foreground
+                }
+            })
+        }))
+}
+
+fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -> impl IntoElement {
+    let depth = move || px(10.0 + row.get().depth as f32 * 14.0);
+    view()
+        .flex_row()
+        .items_center()
+        .h(px(28.0))
         .pl(depth)
-        .pr(move || {
-            if state.get().sidebar_collapsed {
-                px(0.0)
-            } else {
-                px(8.0)
-            }
-        })
+        .pr(px(8.0))
         .gap(px(6.0))
         .rounded_md()
         .mx(px(6.0))
@@ -390,11 +470,7 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
         .bg(move || {
             let row = row.get();
             let ui = state.get();
-            let current = if ui.sidebar_collapsed {
-                row.is_node && row.node == ui.folder_node
-            } else {
-                !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path
-            };
+            let current = !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path;
             if current {
                 theme().sidebar_accent
             } else if hot.get() == row.key {
@@ -429,16 +505,13 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                 let node = ui.nodes.iter().find(|n| n.id == row.node);
                 let online = node.map(|n| n.online && n.agent_ok).unwrap_or(false);
                 let ro = node.map(|n| n.read_only).unwrap_or(false);
-                let os = node.map(|n| n.os.clone()).unwrap_or_default();
+                let os = node_os(&ui, &row.node);
                 view()
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
                     .child(icons::os_icon(&os, 16.0).text_color(move || theme().muted_foreground))
-                    .child(when(
-                        move || !state.get().sidebar_collapsed,
-                        move || icons::status_dot(online, ro),
-                    ))
+                    .child(icons::status_dot(online, ro))
                     .into_element()
             } else {
                 icons::folder_icon(14.0, false)
@@ -446,25 +519,21 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .into_element()
             }
         }))
-        .child(when(
-            move || !state.get().sidebar_collapsed,
-            move || {
-                text(move || row.get().label.clone())
-                    .text_size(px(12.5))
-                    .number_of_lines(1)
-                    .flex_1()
-                    .text_color(move || {
-                        let row = row.get();
-                        let ui = state.get();
-                        if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path
-                        {
-                            theme().sidebar_accent_foreground
-                        } else {
-                            theme().sidebar_foreground
-                        }
-                    })
-            },
-        ))
+        .child(
+            text(move || row.get().label.clone())
+                .text_size(px(12.5))
+                .number_of_lines(1)
+                .flex_1()
+                .text_color(move || {
+                    let row = row.get();
+                    let ui = state.get();
+                    if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path {
+                        theme().sidebar_accent_foreground
+                    } else {
+                        theme().sidebar_foreground
+                    }
+                }),
+        )
         .child(when(
             move || {
                 state
@@ -472,7 +541,7 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .nodes
                     .iter()
                     .find(|n| n.id == row.get().node)
-                    .map(|n| n.read_only && row.get().is_node && !state.get().sidebar_collapsed)
+                    .map(|n| n.read_only && row.get().is_node)
                     .unwrap_or(false)
             },
             || {
@@ -1637,8 +1706,8 @@ fn node_os(ui: &Ui, id: &str) -> String {
     ui.nodes
         .iter()
         .find(|n| n.id == id)
-        .map(|n| n.os.clone())
-        .unwrap_or_default()
+        .map(|n| icons::resolve_node_os(&n.os, &n.id, &n.name))
+        .unwrap_or_else(|| icons::resolve_node_os("", id, id))
 }
 
 fn crumbs(ui: &Ui) -> Vec<Crumb> {

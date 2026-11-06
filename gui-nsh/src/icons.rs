@@ -234,8 +234,30 @@ pub fn os_label(os: &str) -> &'static str {
     }
 }
 
+/// Resolves a node's OS string, inferring known demo/loopback host families
+/// when the agent reports `"loopback"` or an empty OS string.
+pub fn resolve_node_os(os: &str, id: &str, name: &str) -> String {
+    if os_kind(os) != OsKind::Other {
+        return os.to_owned();
+    }
+    for candidate in [name, id] {
+        let key = candidate.trim().to_ascii_lowercase();
+        match key.as_str() {
+            "alpha" => return "macos".to_owned(),
+            "beta" => return "windows".to_owned(),
+            "gamma" => return "linux".to_owned(),
+            "pixel" => return "android".to_owned(),
+            "phone" => return "ios".to_owned(),
+            _ => {}
+        }
+    }
+    os.to_owned()
+}
+
 /// Mono OS mark in the view's text color. Lucide has no Apple, Windows,
 /// Tux, or Android robot, so these are small filled silhouettes (24×24).
+/// Nodes without a recognized OS family fall back to the generic host glyph
+/// so collapsed sidebar rails and tabs always display a visible icon.
 pub fn os_icon(os: &str, size: f32) -> CanvasView {
     match os_kind(os) {
         OsKind::Mac => filled_svg(path::APPLE, size),
@@ -243,7 +265,7 @@ pub fn os_icon(os: &str, size: f32) -> CanvasView {
         OsKind::Windows => filled_svg(path::WINDOWS, size),
         OsKind::Linux => evenodd_svg(path::TUX, size),
         OsKind::Android => evenodd_svg(path::ANDROID, size),
-        OsKind::Other => filled_svg("", size).w(px(0.0)).h(px(0.0)),
+        OsKind::Other => stroke_icon(path::SERVER, size),
     }
 }
 
@@ -422,5 +444,8 @@ mod tests {
         assert_eq!(os_kind("loopback"), OsKind::Other);
         assert_eq!(os_label("ios"), "iOS");
         assert_eq!(os_label("windows"), "Windows");
+        assert_eq!(resolve_node_os("loopback", "alpha", "alpha"), "macos");
+        assert_eq!(resolve_node_os("", "beta", "beta"), "windows");
+        assert_eq!(resolve_node_os("linux", "alpha", "alpha"), "linux");
     }
 }
