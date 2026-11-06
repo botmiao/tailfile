@@ -62,6 +62,62 @@ fn chrome_height() -> nsh_core::Points {
     if h > px(0.0) { h } else { px(46.0) }
 }
 
+/// Full Tailnet column. The tab strip starts at this edge.
+const SIDEBAR_W: f32 = 262.0;
+/// Collapsed rail: host icons only.
+const SIDEBAR_RAIL: f32 = 72.0;
+
+fn sidebar_width(collapsed: bool) -> f32 {
+    if collapsed { SIDEBAR_RAIL } else { SIDEBAR_W }
+}
+
+fn title_left_inset() -> nsh_core::Points {
+    let left = title_bar().left;
+    if left > px(0.0) {
+        left + px(8.0)
+    } else {
+        px(10.0)
+    }
+}
+
+/// Logo column. Its width matches the Tailnet pane so tabs begin at the divider.
+fn brand_column(state: Signal<Ui>) -> impl IntoElement {
+    view()
+        .w(move || px(sidebar_width(state.get().sidebar_collapsed)))
+        .flex_none()
+        .h(move || chrome_height())
+        .flex_row()
+        .items_center()
+        .pl(move || {
+            if state.get().sidebar_collapsed {
+                px(6.0)
+            } else {
+                title_left_inset()
+            }
+        })
+        .pr(px(4.0))
+        .gap(px(6.0))
+        .child(icons::logo_mark(22.0))
+        .child(when(
+            move || !state.get().sidebar_collapsed,
+            || {
+                text(icons::LOGO_TITLE)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_size(px(14.0))
+                    .flex_1()
+            },
+        ))
+        .child(
+            when(
+                move || state.get().sidebar_collapsed,
+                move || icon_btn(ip::PANEL_LEFT_OPEN, move || model::toggle_sidebar(state)),
+            )
+            .otherwise(move || {
+                icon_btn(ip::PANEL_LEFT_CLOSE, move || model::toggle_sidebar(state))
+            }),
+        )
+}
+
 /// Logo, host tabs, and theme/settings in the window's own title bar.
 /// `window_drag` moves the window; presses on tabs and buttons stay clicks.
 fn chrome(state: Signal<Ui>) -> impl IntoElement {
@@ -71,14 +127,6 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
         .flex_row()
         .items_end()
         .h(move || chrome_height())
-        .pl(move || {
-            let left = title_bar().left;
-            if left > px(0.0) {
-                left + px(10.0)
-            } else {
-                px(12.0)
-            }
-        })
         .pr(move || {
             let right = title_bar().right;
             if right > px(0.0) {
@@ -87,43 +135,33 @@ fn chrome(state: Signal<Ui>) -> impl IntoElement {
                 px(8.0)
             }
         })
-        .gap(px(4.0))
         .bg(move || theme().background)
         .border_b_1()
         .border_color(move || theme().border)
+        .child(brand_column(state))
         .child(
-            view()
-                .flex_row()
-                .items_center()
+            scroll()
+                .flex_1()
                 .h(move || chrome_height())
-                .gap(px(8.0))
-                .pr(px(8.0))
-                .child(icons::logo_mark(26.0))
+                .pl(px(8.0))
                 .child(
-                    text(icons::LOGO_TITLE)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_size(px(14.0)),
+                    view()
+                        .flex_row()
+                        .items_end()
+                        .h(move || chrome_height())
+                        .child(dynamic(move || {
+                            let ui = state.get();
+                            ui.tabs
+                                .iter()
+                                .enumerate()
+                                .map(|(index, tab)| {
+                                    let title = tab.title(&ui.nodes);
+                                    let os = node_os(&ui, &tab.node);
+                                    tab_chip(state, hot_tab, index, title, os)
+                                })
+                                .collect::<Vec<_>>()
+                        })),
                 ),
-        )
-        .child(
-            scroll().flex_1().h(move || chrome_height()).child(
-                view()
-                    .flex_row()
-                    .items_end()
-                    .h(move || chrome_height())
-                    .child(dynamic(move || {
-                        let ui = state.get();
-                        ui.tabs
-                            .iter()
-                            .enumerate()
-                            .map(|(index, tab)| {
-                                let title = tab.title(&ui.nodes);
-                                let os = node_os(&ui, &tab.node);
-                                tab_chip(state, hot_tab, index, title, os)
-                            })
-                            .collect::<Vec<_>>()
-                    })),
-            ),
         )
         .child(
             view()
@@ -256,25 +294,28 @@ fn body(state: Signal<Ui>) -> impl IntoElement {
 fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
     let hot = signal(String::new());
     view()
-        .w(px(262.0))
+        .w(move || px(sidebar_width(state.get().sidebar_collapsed)))
         .flex_none()
         .border_r_1()
         .border_color(move || theme().sidebar_border)
         .bg(move || theme().sidebar)
-        .child(
-            view().px(px(12.0)).py(px(10.0)).gap(px(2.0)).child(
-                text(move || {
-                    let n = state.get().nodes.len();
-                    format!("Tailnet · {n} 个节点")
-                })
-                .text_size(px(11.0))
-                .text_color(move || theme().muted_foreground),
-            ),
-        )
+        .child(when(
+            move || !state.get().sidebar_collapsed,
+            move || {
+                view().px(px(12.0)).py(px(10.0)).gap(px(2.0)).child(
+                    text(move || {
+                        let n = state.get().nodes.len();
+                        format!("Tailnet · {n} 个节点")
+                    })
+                    .text_size(px(11.0))
+                    .text_color(move || theme().muted_foreground),
+                )
+            },
+        ))
         .child(
             scroll().flex_1().child(
                 when(
-                    move || model::tree_rows(&state.get()).is_empty(),
+                    move || sidebar_rows(&state.get()).is_empty(),
                     move || {
                         text("还没有节点")
                             .p(px(12.0))
@@ -284,30 +325,61 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
                 )
                 .otherwise(move || {
                     view().child(each(
-                        move || model::tree_rows(&state.get()),
+                        move || sidebar_rows(&state.get()),
                         |row| row.key.clone(),
                         move |row, _| tree_item(state, hot, row),
                     ))
                 }),
             ),
         )
-        .child(
-            text("仅显示白名单目录 · Ctrl/右键 = 新标签页")
-                .px(px(12.0))
-                .py(px(8.0))
-                .text_size(px(10.0))
-                .text_color(move || theme().muted_foreground),
-        )
+        .child(when(
+            move || !state.get().sidebar_collapsed,
+            || {
+                text("仅显示白名单目录 · Ctrl/右键 = 新标签页")
+                    .px(px(12.0))
+                    .py(px(8.0))
+                    .text_size(px(10.0))
+                    .text_color(move || theme().muted_foreground)
+            },
+        ))
+}
+
+fn sidebar_rows(ui: &Ui) -> Vec<TreeRow> {
+    let rows = model::tree_rows(ui);
+    if ui.sidebar_collapsed {
+        rows.into_iter().filter(|row| row.is_node).collect()
+    } else {
+        rows
+    }
 }
 
 fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -> impl IntoElement {
-    let depth = move || px(10.0 + row.get().depth as f32 * 14.0);
+    let depth = move || {
+        if state.get().sidebar_collapsed {
+            px(0.0)
+        } else {
+            px(10.0 + row.get().depth as f32 * 14.0)
+        }
+    };
     view()
         .flex_row()
         .items_center()
-        .h(px(28.0))
+        .justify_center()
+        .h(move || {
+            if state.get().sidebar_collapsed {
+                px(36.0)
+            } else {
+                px(28.0)
+            }
+        })
         .pl(depth)
-        .pr(px(8.0))
+        .pr(move || {
+            if state.get().sidebar_collapsed {
+                px(0.0)
+            } else {
+                px(8.0)
+            }
+        })
         .gap(px(6.0))
         .rounded_md()
         .mx(px(6.0))
@@ -315,7 +387,11 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
         .bg(move || {
             let row = row.get();
             let ui = state.get();
-            let current = !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path;
+            let current = if ui.sidebar_collapsed {
+                row.is_node && row.node == ui.folder_node
+            } else {
+                !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path
+            };
             if current {
                 theme().sidebar_accent
             } else if hot.get() == row.key {
@@ -355,8 +431,11 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .flex_row()
                     .items_center()
                     .gap(px(6.0))
-                    .child(icons::os_icon(&os, 15.0).text_color(move || theme().muted_foreground))
-                    .child(icons::status_dot(online, ro))
+                    .child(icons::os_icon(&os, 16.0).text_color(move || theme().muted_foreground))
+                    .child(when(
+                        move || !state.get().sidebar_collapsed,
+                        move || icons::status_dot(online, ro),
+                    ))
                     .into_element()
             } else {
                 icons::folder_icon(14.0, false)
@@ -364,21 +443,25 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .into_element()
             }
         }))
-        .child(
-            text(move || row.get().label.clone())
-                .text_size(px(12.5))
-                .number_of_lines(1)
-                .flex_1()
-                .text_color(move || {
-                    let row = row.get();
-                    let ui = state.get();
-                    if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path {
-                        theme().sidebar_accent_foreground
-                    } else {
-                        theme().sidebar_foreground
-                    }
-                }),
-        )
+        .child(when(
+            move || !state.get().sidebar_collapsed,
+            move || {
+                text(move || row.get().label.clone())
+                    .text_size(px(12.5))
+                    .number_of_lines(1)
+                    .flex_1()
+                    .text_color(move || {
+                        let row = row.get();
+                        let ui = state.get();
+                        if !row.is_node && row.node == ui.folder_node && row.path == ui.folder_path
+                        {
+                            theme().sidebar_accent_foreground
+                        } else {
+                            theme().sidebar_foreground
+                        }
+                    })
+            },
+        ))
         .child(when(
             move || {
                 state
@@ -386,7 +469,7 @@ fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -
                     .nodes
                     .iter()
                     .find(|n| n.id == row.get().node)
-                    .map(|n| n.read_only && row.get().is_node)
+                    .map(|n| n.read_only && row.get().is_node && !state.get().sidebar_collapsed)
                     .unwrap_or(false)
             },
             || {

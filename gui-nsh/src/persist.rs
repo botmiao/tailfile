@@ -74,6 +74,9 @@ pub struct UiPersist {
     pub active_tab: usize,
     #[serde(default = "default_true")]
     pub preview_on: bool,
+    /// Sidebar folded to the host-icon rail.
+    #[serde(default)]
+    pub sidebar_collapsed: bool,
 }
 
 fn default_true() -> bool {
@@ -150,6 +153,7 @@ mod tests {
             }],
             active_tab: 0,
             preview_on: false,
+            sidebar_collapsed: true,
         };
         save(dir.to_str().unwrap(), &data);
         let loaded = load(dir.to_str().unwrap());
@@ -157,6 +161,7 @@ mod tests {
         assert_eq!(loaded.tabs.len(), 1);
         assert_eq!(loaded.tabs[0].filter, "png");
         assert!(!loaded.preview_on);
+        assert!(loaded.sidebar_collapsed);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

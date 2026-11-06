@@ -142,6 +142,8 @@ pub struct Ui {
     pub daemon_guide: Option<InstallGuide>,
     pub daemon_os: String,
     pub history_note: String,
+    /// Tailnet column folded to host icons. Remembered in `nsh-ui.json`.
+    pub sidebar_collapsed: bool,
 }
 
 impl Ui {
@@ -219,6 +221,7 @@ impl Ui {
             daemon_guide: None,
             daemon_os: default_os_hint(),
             history_note: String::new(),
+            sidebar_collapsed: false,
         }
     }
 }
@@ -1302,6 +1305,7 @@ fn restore_persist(state: Signal<Ui>) {
         ui.theme = data.theme.clone();
         ui.restore_tabs = data.restore_tabs;
         ui.preview_on = data.preview_on;
+        ui.sidebar_collapsed = data.sidebar_collapsed;
         if data.restore_tabs {
             ui.tabs = data
                 .tabs
@@ -1349,6 +1353,7 @@ fn persist_ui(state: Signal<Ui>) {
             .collect(),
         active_tab: ui.active_tab,
         preview_on: ui.preview_on,
+        sidebar_collapsed: ui.sidebar_collapsed,
     };
     persist::save(&ui.state_dir, &data);
     token::save_preview_on(ui.preview_on);
@@ -1361,6 +1366,11 @@ fn apply_theme_pref(pref: ThemePref) {
         ThemePref::Dark => Appearance::Dark,
     };
     set_color_scheme(appearance);
+}
+
+pub fn toggle_sidebar(state: Signal<Ui>) {
+    state.update(|ui| ui.sidebar_collapsed = !ui.sidebar_collapsed);
+    persist_ui(state);
 }
 
 pub fn set_theme(state: Signal<Ui>, pref: ThemePref) {
