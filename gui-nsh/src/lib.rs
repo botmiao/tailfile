@@ -5,7 +5,7 @@ pub mod api;
 pub mod daemon;
 pub mod icons;
 mod launch;
-mod model;
+pub mod model;
 pub mod names;
 pub mod persist;
 pub mod token;
