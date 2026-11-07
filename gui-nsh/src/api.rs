@@ -1,6 +1,6 @@
 //! Localhost client for the Tailfile agent. The bearer comes from disk.
 //! This client does not set `Origin`: an empty Origin plus the bearer is
-//! what the agent allows for a native shell that is not the Wails page.
+//! what the agent expects from the Native Shell client.
 //! The auth key is sent once on PUT and is never written to a log.
 
 use std::time::Duration;

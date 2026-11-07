@@ -8,8 +8,8 @@
 
 ## Scope kept
 
-- 未改写 gui-mygo / gui-wails。
-- 保留既有复制冲突语义与安全模型；仅新增 delete 与 nsh UI 能力。
+- 桌面客户端统一收敛为 `gui-nsh`（Native Shell）。
+- 保留既有复制冲突语义与安全模型；新增 delete 与 nsh UI 能力。
 
 ## PR #3 gap fix (resume)
 

@@ -20,12 +20,6 @@ import (
 // A grant value is JSON: {"read":["/path"],"write":["/path"]}.
 const TailfileCap = "iori.dev/cap/tailfile"
 
-// OriginMyGo is the Origin the native shell sends. It has no browser origin of its own.
-const OriginMyGo = "mygo://tailfile"
-
-// WailsServerOrigin is the browser origin of `go build -tags server`.
-const WailsServerOrigin = "http://127.0.0.1:17431"
-
 // GUITokenFile is the per-start bearer token, mode 0600, inside the state dir.
 const GUITokenFile = guitoken.FileName
 
@@ -106,26 +100,21 @@ func hostIsLoopback(hostport string) bool {
 	return ip != nil && ip.IsLoopback()
 }
 
-// originAllowed reports whether a browser Origin may call the local API.
-// An empty Origin is not a browser page; the bearer check still applies.
+// originAllowed reports whether an Origin header may call the local API.
+// Native Shell (gui-nsh) sends an empty Origin; the bearer check still applies.
 func originAllowed(origin string) bool {
 	if origin == "" {
 		return false
 	}
 	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" && u.Scheme != "wails" && u.Scheme != "mygo" {
+	if err != nil || u.Host == "" && u.Scheme != "nsh" {
 		return false
 	}
 	switch strings.ToLower(u.Scheme) {
-	case "mygo":
+	case "nsh":
 		return strings.EqualFold(u.Host, "tailfile") || u.Host == ""
-	case "wails":
-		return true
 	case "http":
 		host := strings.Trim(u.Hostname(), "[]")
-		if strings.EqualFold(host, "wails.localhost") {
-			return true
-		}
 		if host != "127.0.0.1" && !strings.EqualFold(host, "localhost") && host != "::1" {
 			return false
 		}

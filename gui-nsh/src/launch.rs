@@ -1,4 +1,4 @@
-//! `-agent`, `-token-file`, and `-state`, matching `gui-mygo` and `gui-wails`.
+//! Command-line and environment configuration (`-agent`, `-token-file`, and `-state`).
 
 use std::sync::OnceLock;
 

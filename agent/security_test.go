@@ -64,11 +64,11 @@ func TestLocalRequiresTokenAndLoopbackHost(t *testing.T) {
 	}
 	mustCode(ok, 200)
 
-	wails := do(http.MethodGet, "wails://wails", "", testGUIToken)
-	if wails.Header.Get("Access-Control-Allow-Origin") != "wails://wails" {
-		t.Fatalf("wails ACAO %q", wails.Header.Get("Access-Control-Allow-Origin"))
+	nsh := do(http.MethodGet, "nsh://tailfile", "", testGUIToken)
+	if nsh.Header.Get("Access-Control-Allow-Origin") != "nsh://tailfile" {
+		t.Fatalf("nsh ACAO %q", nsh.Header.Get("Access-Control-Allow-Origin"))
 	}
-	mustCode(wails, 200)
+	mustCode(nsh, 200)
 
 	mustCode(do(http.MethodGet, "", "rebind.example", testGUIToken), 403)
 	mustCode(do(http.MethodOptions, "http://127.0.0.1:17431", "", ""), 204)

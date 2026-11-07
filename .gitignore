@@ -6,14 +6,8 @@
 *.test
 .DS_Store
 
-# Frontend tooling
-**/node_modules/
-**/.vite/
-
-# MyGo / Wails local build output
-**/.mygo/
-gui-wails/bin/
-gui-mygo/build/
+# Native Shell (gui-nsh) build output
+gui-nsh/target/
 
 # Agent state and demo caches (node keys live here — never commit)
 **/.tailfile-state/
