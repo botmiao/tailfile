@@ -212,9 +212,59 @@ fn fnv(bytes: &[u8]) -> u64 {
     hash
 }
 
+fn canonicalize_remote(path: &str) -> Option<String> {
+    let raw = path.replace('\\', "/");
+    let trimmed = raw.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return if raw.starts_with('/') {
+            Some("/".to_owned())
+        } else {
+            None
+        };
+    }
+    let has_leading_slash = trimmed.starts_with('/');
+    let mut parts: Vec<&str> = Vec::new();
+    let mut drive_prefix: Option<&str> = None;
+    for (idx, seg) in trimmed.split('/').enumerate() {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if idx == 0 && !has_leading_slash && seg.len() == 2 && seg.as_bytes()[1] == b':' {
+            drive_prefix = Some(seg);
+            continue;
+        }
+        if seg == ".." {
+            parts.pop()?;
+            continue;
+        }
+        parts.push(seg);
+    }
+    let joined = parts.join("/");
+    if let Some(drive) = drive_prefix {
+        if joined.is_empty() {
+            Some(drive.to_owned())
+        } else {
+            Some(format!("{drive}/{joined}"))
+        }
+    } else if has_leading_slash {
+        Some(format!("/{joined}"))
+    } else if joined.is_empty() {
+        None
+    } else {
+        Some(joined)
+    }
+}
+
 pub fn path_is_under(path: &str, root: &str) -> bool {
-    let path = norm_remote(path);
-    let root = norm_remote(root);
+    let Some(path) = canonicalize_remote(path) else {
+        return false;
+    };
+    let Some(root) = canonicalize_remote(root) else {
+        return false;
+    };
+    if root == "/" {
+        return path.starts_with('/');
+    }
     path == root || path.starts_with(&(root.trim_end_matches('/').to_owned() + "/"))
 }
 

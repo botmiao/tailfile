@@ -82,16 +82,15 @@ When a check in `formal_model_check` fails, determine whether it is a real produ
    - A synchronous test step relies on an async `offload` callback updating `ui.entries` after `load_list`, and the test step forgot to call `sync_mock_entries_for_active_folder(state)`.
    - **Action**: Update `formal_model_check.rs` to match the new signature/assumption and update the sync commit in this `SKILL.md`.
 
-## Open Findings on Sync Commit (`3641833`)
+## Verification Status (All 4 Checks Passing)
 
-Running the suite on commit `3641833` passes `check_read_root_escape_freedom` and `check_overlay_and_escape_determinism`, and surfaces **4 real defects** (across `check_folder_action_target_isolation` and `check_active_tab_state_sync`):
+All 4 formal model checks (`check_read_root_escape_freedom`, `check_overlay_and_escape_determinism`, `check_folder_action_target_isolation`, `check_active_tab_state_sync`) pass with `0` counterexamples:
 
-1. **`ReadOnlyWriteGate` violation (2 steps: `BeginNewFolder -> SwitchTab2GammaReadOnly`)**:
-   - Opening the new-folder (`inline_new = true`) or rename (`inline_rename = true`) inline editor on a writable tab and then switching tabs (`switch_tab`, `select_folder`, `focus_or_open_tab`, `nav_back`, `reopen_closed_tab`) to a read-only node (`gamma`, `read_only = true`) does not clear `inline_new` / `inline_rename`. Furthermore, `mkdir()` (`model.rs:943`) and `rename()` (`model.rs:992`) do not re-check `current_folder_readonly(&ui)`.
-2. **`SelectionFolderScope` violation (2 steps: `ToggleSelectAlphaHello -> SwitchTab1Beta`)**:
-   - Multi-selecting a file (`toggle_select_path`) on Tab 0 (`alpha:/tmp/demo/alpha/hello.txt`) and calling `switch_tab(state, 1)` (or `nav_back`, `nav_forward`, `reopen_closed_tab`, `close_tab`) changes `ui.folder_node` / `ui.folder_path` to `beta:C:/Users/beta/Shared` without clearing `ui.selected_paths`. Subsequent `ask_delete` / `confirm_delete` reads stale paths from `ui.selected_paths` and sends `DELETE` for the previous tab's path against the new active node.
-3. **`DotDotTraversalInPathIsUnder` violation (`token::path_is_under("/tmp/alpha/../alpha-evil", "/tmp/alpha") == true`)**:
-   - `token::norm_remote` in `gui-nsh/src/token.rs:221` only replaces `\` with `/` and trims trailing slashes without resolving or rejecting `..` parent-directory segments, allowing a non-canonical path containing `/../` to pass `path_is_under`.
-4. **`ActiveTabFieldsSync` violations (`SelectRow2 -> ReopenClosedTab` and `SelectRow2 -> FocusExistingHostSubfolder`)**:
-   - `reopen_closed_tab` (`model.rs:1818-1829`) restores `folder_node`, `folder_path`, `filter`, `sort`, and `view` from the popped tab, but forgets to call `sync_active_tab_fields(ui)` on the outgoing tab and forgets `ui.selected = tab.selected;`, leaving `ui.selected = 2` while `ui.tabs[ui.active_tab].selected = -1`.
-   - `focus_or_open_tab` (`model.rs:1726-1738`) sets `ui.selected = -1` after `ensure_tab_for` without calling `sync_active_tab_fields(ui)`, leaving `ui.selected = -1` while `ui.tabs[0].selected = 2`.
+1. **`ReadOnlyWriteGate` (Resolved)**:
+   - `reset_folder_transient_state` in `gui-nsh/src/model.rs` clears `inline_new`, `inline_rename`, `delete_open`, `ctx_open`, and `more_open` across all folder/tab transitions (`select_folder`, `focus_or_open_tab`, `switch_tab`, `close_tab`, `reopen_closed_tab`, `nav_back`, `nav_forward`), and `mkdir`, `rename`, and `confirm_delete` re-verify `current_folder_readonly(&ui)`.
+2. **`SelectionFolderScope` (Resolved)**:
+   - `reset_folder_transient_state` clears `ui.selected_paths` across every folder/tab transition, and `toggle_select_path` verifies `path_is_under(&path, &ui.folder_path)` before adding a path to `ui.selected_paths`.
+3. **`DotDotTraversalInPathIsUnder` (Resolved)**:
+   - `token::path_is_under` canonicalizes `.` and `..` segments via `canonicalize_remote` in `gui-nsh/src/token.rs`, rejecting parent-directory traversal outside `root` (e.g., `/tmp/alpha/../alpha-evil`).
+4. **`ActiveTabFieldsSync` (Resolved)**:
+   - `focus_or_open_tab`, `select_folder`, `switch_tab`, `close_tab`, `reopen_closed_tab`, `nav_back`, and `nav_forward` synchronize outgoing and incoming `TabState` fields (`selected`, `filter`, `sort`, `view`, `node`, `path`) with top-level `Ui`.

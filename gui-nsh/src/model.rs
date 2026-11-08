@@ -796,6 +796,7 @@ fn click_tree_ex(state: Signal<Ui>, row: TreeRow, force_new: bool) {
 
 pub fn select_folder(state: Signal<Ui>, node: String, path: String) {
     state.update(|ui| {
+        sync_active_tab_fields(ui);
         let prev_node = ui.folder_node.clone();
         let prev_path = ui.folder_path.clone();
         if !prev_node.is_empty() && (prev_node != node || prev_path != path) {
@@ -807,12 +808,13 @@ pub fn select_folder(state: Signal<Ui>, node: String, path: String) {
         ui.folder_node = node.clone();
         ui.folder_path = path.clone();
         ui.selected = -1;
-        ui.selected_paths.clear();
-        ui.preview_path.clear();
-        ui.preview_text.clear();
-        ui.preview_image.clear();
-        ui.preview_kind.clear();
+        reset_folder_transient_state(ui);
         ensure_tab_for(ui, &node, &path, false);
+        if let Some(tab) = ui.tabs.get(ui.active_tab) {
+            ui.filter = tab.filter.clone();
+            ui.sort = tab.sort.clone();
+            ui.view = tab.view.clone();
+        }
         sync_active_tab_fields(ui);
     });
     persist_ui(state);
@@ -1076,8 +1078,12 @@ pub fn paste(state: Signal<Ui>) {
 pub fn mkdir(state: Signal<Ui>) {
     let ui = state.get();
     let name = ui.new_name.trim().to_owned();
-    if ui.folder_node.is_empty() {
-        state.update(|ui| ui.status = "请先打开可写目录".into());
+    if ui.folder_node.is_empty() || current_folder_readonly(&ui) {
+        state.update(|ui| {
+            ui.inline_new = false;
+            ui.name_error.clear();
+            ui.status = "当前目录只读，无法新建文件夹".into();
+        });
         return;
     }
     let existing: Vec<String> = ui.entries.iter().map(|e| e.name.clone()).collect();
@@ -1120,6 +1126,14 @@ pub fn mkdir(state: Signal<Ui>) {
 
 pub fn rename(state: Signal<Ui>) {
     let ui = state.get();
+    if current_folder_readonly(&ui) {
+        state.update(|ui| {
+            ui.inline_rename = false;
+            ui.name_error.clear();
+            ui.status = "当前目录只读，无法重命名".into();
+        });
+        return;
+    }
     let Some(entry) = selected(&ui) else {
         state.update(|ui| ui.status = "请选择一项并输入新名称".into());
         return;
@@ -1688,6 +1702,22 @@ pub fn set_theme(state: Signal<Ui>, pref: ThemePref) {
     persist_ui(state);
 }
 
+fn reset_folder_transient_state(ui: &mut Ui) {
+    ui.inline_new = false;
+    ui.inline_rename = false;
+    ui.name_error.clear();
+    ui.delete_open = false;
+    ui.delete_paths.clear();
+    ui.delete_note.clear();
+    ui.ctx_open = false;
+    ui.more_open = false;
+    ui.selected_paths.clear();
+    ui.preview_path.clear();
+    ui.preview_text.clear();
+    ui.preview_image.clear();
+    ui.preview_kind.clear();
+}
+
 fn sync_active_tab_fields(ui: &mut Ui) {
     if let Some(tab) = ui.tabs.get_mut(ui.active_tab) {
         tab.node = ui.folder_node.clone();
@@ -1725,16 +1755,18 @@ fn ensure_tab_for(ui: &mut Ui, node: &str, path: &str, force_new: bool) {
 
 pub fn focus_or_open_tab(state: Signal<Ui>, node: String, path: String, force_new: bool) {
     state.update(|ui| {
+        sync_active_tab_fields(ui);
         ensure_tab_for(ui, &node, &path, force_new);
         ui.folder_node = node;
         ui.folder_path = path;
         ui.selected = -1;
-        ui.selected_paths.clear();
+        reset_folder_transient_state(ui);
         if let Some(tab) = ui.tabs.get(ui.active_tab) {
             ui.filter = tab.filter.clone();
             ui.sort = tab.sort.clone();
             ui.view = tab.view.clone();
         }
+        sync_active_tab_fields(ui);
     });
     persist_ui(state);
     load_list(state);
@@ -1755,7 +1787,7 @@ pub fn switch_tab(state: Signal<Ui>, index: usize) {
             ui.sort = tab.sort;
             ui.view = tab.view;
         }
-        ui.preview_path.clear();
+        reset_folder_transient_state(ui);
     });
     persist_ui(state);
     load_list(state);
@@ -1774,6 +1806,8 @@ pub fn close_tab(state: Signal<Ui>, index: usize) {
         if index >= ui.tabs.len() {
             return;
         }
+        sync_active_tab_fields(ui);
+        let closed_was_active = ui.active_tab == index;
         let closed = ui.tabs.remove(index);
         ui.closed_tabs.push(closed);
         if ui.tabs.is_empty() {
@@ -1781,14 +1815,16 @@ pub fn close_tab(state: Signal<Ui>, index: usize) {
             ui.folder_path.clear();
             ui.entries.clear();
             ui.selected = -1;
-            ui.selected_paths.clear();
+            reset_folder_transient_state(ui);
             ui.active_tab = 0;
-        } else if ui.active_tab == index || ui.active_tab > index {
+        } else {
             if ui.active_tab > index {
                 ui.active_tab -= 1;
-            }
-            if ui.active_tab == index {
+            } else if closed_was_active {
                 ui.active_tab = index.min(ui.tabs.len() - 1);
+            }
+            if closed_was_active {
+                reset_folder_transient_state(ui);
             }
             if let Some(tab) = ui.tabs.get(ui.active_tab).cloned() {
                 ui.folder_node = tab.node;
@@ -1818,11 +1854,14 @@ pub fn cycle_sort(state: Signal<Ui>) {
 pub fn reopen_closed_tab(state: Signal<Ui>) {
     state.update(|ui| {
         if let Some(tab) = ui.closed_tabs.pop() {
+            sync_active_tab_fields(ui);
             ui.folder_node = tab.node.clone();
             ui.folder_path = tab.path.clone();
+            ui.selected = tab.selected;
             ui.filter = tab.filter.clone();
             ui.sort = tab.sort.clone();
             ui.view = tab.view.clone();
+            reset_folder_transient_state(ui);
             ui.tabs.push(tab);
             ui.active_tab = ui.tabs.len() - 1;
         }
@@ -1862,6 +1901,8 @@ pub fn nav_back(state: Signal<Ui>) {
         }
         ui.folder_node = parts[0].to_owned();
         ui.folder_path = parts[1].to_owned();
+        ui.selected = -1;
+        reset_folder_transient_state(ui);
         sync_active_tab_fields(ui);
     });
     load_list(state);
@@ -1888,6 +1929,8 @@ pub fn nav_forward(state: Signal<Ui>) {
         }
         ui.folder_node = parts[0].to_owned();
         ui.folder_path = parts[1].to_owned();
+        ui.selected = -1;
+        reset_folder_transient_state(ui);
         sync_active_tab_fields(ui);
     });
     load_list(state);
@@ -2014,7 +2057,7 @@ pub fn cancel_delete(state: Signal<Ui>) {
 
 pub fn confirm_delete(state: Signal<Ui>) {
     let ui = state.get();
-    if ui.delete_paths.is_empty() {
+    if ui.delete_paths.is_empty() || current_folder_readonly(&ui) {
         cancel_delete(state);
         return;
     }
@@ -2096,7 +2139,7 @@ pub fn toggle_select_path(state: Signal<Ui>, path: String) {
     state.update(|ui| {
         if let Some(pos) = ui.selected_paths.iter().position(|p| p == &path) {
             ui.selected_paths.remove(pos);
-        } else {
+        } else if !ui.folder_path.is_empty() && path_is_under(&path, &ui.folder_path) {
             ui.selected_paths.push(path);
         }
     });
