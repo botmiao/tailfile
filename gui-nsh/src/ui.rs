@@ -11,6 +11,7 @@ use nsh_core::element::Tokens;
 use nsh_core::element::desktop::{set_title_bar, title_bar};
 use nsh_core::prelude::*;
 use nsh_core::{ContextMenuEvent, EventKind, EventPayload, PressEvent};
+use nsh_core::{Edges, PointerEvents};
 
 use crate::api::{self, job_line, size_label};
 use crate::model::{self, TreeRow, Ui};
@@ -221,10 +222,17 @@ fn tab_chip(
         .cursor(Cursor::Pointer)
         .flex_row()
         .items_center()
-        .h(move || chrome_height())
+        .self_stretch()
+        .h_full()
         .px(px(10.0))
         .gap(px(6.0))
         .max_w(px(240.0))
+        .hit_slop(Edges {
+            top: px(0.0),
+            right: px(0.0),
+            bottom: px(8.0),
+            left: px(0.0),
+        })
         .bg(move || {
             let active = state.get().active_tab == index;
             if !active && hot_tab.get() == index as i32 {
@@ -242,13 +250,23 @@ fn tab_chip(
         .on_press(move || model::switch_tab(state, index))
         .child(
             view()
+                .absolute()
+                .top(px(0.0))
+                .left(px(0.0))
+                .right(px(0.0))
+                .bottom(px(0.0))
+                .on_press(move || model::switch_tab(state, index)),
+        )
+        .child(
+            view()
                 .flex_row()
                 .items_center()
-                .h(move || chrome_height())
+                .self_stretch()
+                .h_full()
                 .gap(px(6.0))
                 .flex_1()
                 .min_w(px(0.0))
-                .on_press(move || model::switch_tab(state, index))
+                .pointer_events(PointerEvents::None)
                 .child(icons::os_icon(&os_for_icon, 16.0).text_color(move || {
                     if state.get().active_tab == index {
                         theme().primary
@@ -271,8 +289,9 @@ fn tab_chip(
         )
         .child(
             view()
-                .w(px(20.0))
-                .h(px(20.0))
+                .w(px(28.0))
+                .self_stretch()
+                .h_full()
                 .items_center()
                 .justify_center()
                 .rounded_sm()
@@ -307,6 +326,7 @@ fn tab_chip(
                 .right(px(8.0))
                 .h(px(2.0))
                 .rounded_full()
+                .pointer_events(PointerEvents::None)
                 .bg(move || {
                     if state.get().active_tab == index {
                         theme().primary
@@ -331,6 +351,8 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
     view()
         .w(move || px(sidebar_width(state.get().sidebar_collapsed)))
         .flex_none()
+        .flex_col()
+        .self_stretch()
         .border_r_1()
         .border_color(move || theme().sidebar_border)
         .bg(move || theme().sidebar)
@@ -348,46 +370,46 @@ fn tree_pane(state: Signal<Ui>) -> impl IntoElement {
             },
         ))
         .child(
-            scroll().flex_1().child(
-                when(
-                    move || sidebar_rows(&state.get()).is_empty(),
-                    move || {
-                        text(move || {
-                            if state.get().sidebar_collapsed {
-                                "—"
-                            } else {
-                                "还没有节点"
-                            }
+            scroll()
+                .flex_1()
+                .min_h(px(0.0))
+                .child(dynamic(move || -> AnyElement {
+                    let ui = state.get();
+                    if ui.nodes.is_empty() {
+                        return text(if ui.sidebar_collapsed {
+                            "—"
+                        } else {
+                            "还没有节点"
                         })
                         .p(px(12.0))
                         .text_size(px(13.0))
                         .text_color(move || theme().muted_foreground)
-                    },
-                )
-                .otherwise(move || {
-                    when(
-                        move || state.get().sidebar_collapsed,
-                        move || {
-                            view()
-                                .pt(px(8.0))
-                                .pb(px(8.0))
-                                .gap(px(4.0))
-                                .child(each(
-                                    move || collapsed_rows(&state.get()),
-                                    |row| row.key.clone(),
-                                    move |row, _| rail_node_item(state, hot, row),
-                                ))
-                        },
-                    )
-                    .otherwise(move || {
-                        view().child(each(
-                            move || model::tree_rows(&state.get()),
-                            |row| row.key.clone(),
-                            move |row, _| tree_item(state, hot, row),
-                        ))
-                    })
-                }),
-            ),
+                        .into_element();
+                    }
+                    if ui.sidebar_collapsed {
+                        view()
+                            .flex_col()
+                            .w(px(SIDEBAR_RAIL))
+                            .pt(px(8.0))
+                            .pb(px(8.0))
+                            .gap(px(2.0))
+                            .items_center()
+                            .child(each(
+                                move || collapsed_rows(&state.get()),
+                                |row| row.key.clone(),
+                                move |row, _| rail_node_item(state, hot, row),
+                            ))
+                            .into_element()
+                    } else {
+                        view()
+                            .child(each(
+                                move || model::tree_rows(&state.get()),
+                                |row| row.key.clone(),
+                                move |row, _| tree_item(state, hot, row),
+                            ))
+                            .into_element()
+                    }
+                })),
         )
         .child(when(
             move || !state.get().sidebar_collapsed,
@@ -408,14 +430,6 @@ fn collapsed_rows(ui: &Ui) -> Vec<TreeRow> {
         .collect()
 }
 
-fn sidebar_rows(ui: &Ui) -> Vec<TreeRow> {
-    if ui.sidebar_collapsed {
-        collapsed_rows(ui)
-    } else {
-        model::tree_rows(ui)
-    }
-}
-
 fn rail_node_item(
     state: Signal<Ui>,
     hot: Signal<String>,
@@ -425,8 +439,8 @@ fn rail_node_item(
         .flex_row()
         .items_center()
         .justify_center()
-        .h(px(38.0))
-        .mx(px(8.0))
+        .w(px(40.0))
+        .h(px(40.0))
         .rounded_md()
         .cursor(Cursor::Pointer)
         .bg(move || {
@@ -459,19 +473,21 @@ fn rail_node_item(
         .on_context_menu(move |_e: &ContextMenuEvent| {
             model::click_tree_new_tab(state, row.get());
         })
-        .child(dynamic(move || {
-            let row = row.get();
-            let ui = state.get();
-            let os = node_os(&ui, &row.node);
-            let active = row.node == ui.folder_node;
-            icons::os_icon(&os, 18.0).text_color(move || {
-                if active {
-                    theme().sidebar_accent_foreground
-                } else {
-                    theme().sidebar_foreground
-                }
-            })
-        }))
+        .child({
+            let os = node_os(&state.get(), &row.get().node);
+            view()
+                .w(px(22.0))
+                .h(px(22.0))
+                .items_center()
+                .justify_center()
+                .child(icons::os_icon(&os, 20.0).text_color(move || {
+                    if row.get().node == state.get().folder_node {
+                        theme().sidebar_accent_foreground
+                    } else {
+                        theme().sidebar_foreground
+                    }
+                }))
+        })
 }
 
 fn tree_item(state: Signal<Ui>, hot: Signal<String>, row: ReadSignal<TreeRow>) -> impl IntoElement {
@@ -1730,16 +1746,10 @@ fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
                                             model::begin_rename(state);
                                         },
                                     ))
-                                    .child(ctx_item(
-                                        ip::TRASH,
-                                        "删除",
-                                        "Del",
-                                        true,
-                                        move || {
-                                            model::close_context_menu(state);
-                                            model::ask_delete(state);
-                                        },
-                                    ))
+                                    .child(ctx_item(ip::TRASH, "删除", "Del", true, move || {
+                                        model::close_context_menu(state);
+                                        model::ask_delete(state);
+                                    }))
                                     .child(ctx_divider())
                             },
                         ))

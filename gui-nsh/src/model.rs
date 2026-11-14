@@ -358,15 +358,11 @@ impl Drop for ExitOnWindowClose {
     fn drop(&mut self) {
         SHUTTING_DOWN.store(true, std::sync::atomic::Ordering::SeqCst);
         if !cfg!(test) {
-            // `Runtime::drop` frees cleanups without calling their closures,
-            // so `Drop` is what actually runs when the window closes. Give
-            // `WM_DESTROY` / `run_app` a brief window to return to `main()`
-            // cleanly, then force-exit so lingering runtime / D3D / COM threads
-            // can never hang the command line.
-            std::thread::spawn(|| {
-                std::thread::sleep(Duration::from_millis(120));
-                force_exit(0);
-            });
+            // Owner disposal is not guaranteed to finish on Windows: nsh's
+            // `WM_DESTROY` joins the engine on the UI thread, and that join
+            // can block before `PostQuitMessage`, so `run_app` never returns.
+            // Exit here as soon as the owner actually drops.
+            force_exit(0);
         }
     }
 }
@@ -480,13 +476,183 @@ fn apply_windows_app_icon() {
     }
 }
 
+/// Windows: `nsh-platform-windows` handles `WM_DESTROY` by joining the
+/// engine thread on the UI thread (`Surface::stop` → `Engine::drop`)
+/// *before* `PostQuitMessage`. The engine thread publishes frames back to
+/// that same UI thread, so the join can block forever inside the window
+/// procedure. The message loop then never sees `WM_QUIT`, `run_app` never
+/// returns, and `main`'s `force_exit` never runs. Reactive `cleanup` is
+/// also skipped: `Runtime::drop` frees owners without running their
+/// closures once teardown is stuck. `boot` runs on the UI thread, so the
+/// hooks below are installed there and `TerminateProcess` this GUI process
+/// on `WM_CLOSE` / `WM_DESTROY` / `SC_CLOSE` before `stop()` can deadlock.
+/// The agent is a different process and is not touched.
+#[cfg(target_os = "windows")]
+fn arm_windows_close_exit() {
+    unsafe {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetCurrentThreadId() -> u32;
+        }
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn SetWindowsHookExW(
+                id: i32,
+                hook: Option<unsafe extern "system" fn(i32, usize, isize) -> isize>,
+                module: *mut std::ffi::c_void,
+                thread: u32,
+            ) -> *mut std::ffi::c_void;
+        }
+        let tid = GetCurrentThreadId();
+        // WH_CALLWNDPROC = 4, WH_GETMESSAGE = 3. Same-process thread hooks
+        // do not need a DLL. Handles are kept for the process lifetime.
+        HOOK_CALL.store(
+            SetWindowsHookExW(4, Some(win_call_hook), std::ptr::null_mut(), tid) as isize,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        HOOK_MSG.store(
+            SetWindowsHookExW(3, Some(win_msg_hook), std::ptr::null_mut(), tid) as isize,
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        if HOOK_CALL.load(std::sync::atomic::Ordering::SeqCst) == 0
+            && HOOK_MSG.load(std::sync::atomic::Ordering::SeqCst) == 0
+        {
+            eprintln!("tailfile-nsh: window-close hook was not installed");
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+static HOOK_CALL: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+#[cfg(target_os = "windows")]
+static HOOK_MSG: std::sync::atomic::AtomicIsize = std::sync::atomic::AtomicIsize::new(0);
+
+#[cfg(target_os = "windows")]
+fn is_nsh_window(hwnd: *mut std::ffi::c_void) -> bool {
+    if hwnd.is_null() {
+        return false;
+    }
+    unsafe {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn GetClassNameW(hwnd: *mut std::ffi::c_void, buf: *mut u16, max: i32) -> i32;
+        }
+        let mut buf = [0u16; 32];
+        let n = GetClassNameW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
+        // "NshWindow", compared in the hook so it does not allocate.
+        const NAME: [u16; 9] = [
+            b'N' as u16,
+            b's' as u16,
+            b'h' as u16,
+            b'W' as u16,
+            b'i' as u16,
+            b'n' as u16,
+            b'd' as u16,
+            b'o' as u16,
+            b'w' as u16,
+        ];
+        n == NAME.len() as i32 && buf[..NAME.len()] == NAME
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn close_message(hwnd: *mut std::ffi::c_void, message: u32, wparam: usize) -> bool {
+    if !is_nsh_window(hwnd) {
+        return false;
+    }
+    const WM_DESTROY: u32 = 0x0002;
+    const WM_CLOSE: u32 = 0x0010;
+    const WM_SYSCOMMAND: u32 = 0x0112;
+    const SC_CLOSE: usize = 0xF060;
+    message == WM_CLOSE
+        || message == WM_DESTROY
+        || (message == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_CLOSE)
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn win_call_hook(code: i32, wparam: usize, lparam: isize) -> isize {
+    unsafe {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn CallNextHookEx(
+                hook: *mut std::ffi::c_void,
+                code: i32,
+                wparam: usize,
+                lparam: isize,
+            ) -> isize;
+        }
+        if code >= 0 && lparam != 0 {
+            // CWPSTRUCT on x64: message is 4 bytes and HWND is 8-aligned.
+            #[repr(C)]
+            struct Cwp {
+                lparam: isize,
+                wparam: usize,
+                message: u32,
+                #[cfg(target_pointer_width = "64")]
+                _pad: u32,
+                hwnd: *mut std::ffi::c_void,
+            }
+            let cwp = &*(lparam as *const Cwp);
+            if close_message(cwp.hwnd, cwp.message, cwp.wparam) {
+                force_exit(0);
+            }
+        }
+        CallNextHookEx(
+            HOOK_CALL.load(std::sync::atomic::Ordering::SeqCst) as *mut std::ffi::c_void,
+            code,
+            wparam,
+            lparam,
+        )
+    }
+}
+
+#[cfg(target_os = "windows")]
+unsafe extern "system" fn win_msg_hook(code: i32, wparam: usize, lparam: isize) -> isize {
+    unsafe {
+        #[link(name = "user32")]
+        unsafe extern "system" {
+            fn CallNextHookEx(
+                hook: *mut std::ffi::c_void,
+                code: i32,
+                wparam: usize,
+                lparam: isize,
+            ) -> isize;
+        }
+        if code >= 0 && lparam != 0 {
+            // MSG on x64: 4 bytes of padding between message and wParam.
+            #[repr(C)]
+            struct MsgHead {
+                hwnd: *mut std::ffi::c_void,
+                message: u32,
+                #[cfg(target_pointer_width = "64")]
+                _pad: u32,
+                wparam: usize,
+                lparam: isize,
+            }
+            let msg = &*(lparam as *const MsgHead);
+            if close_message(msg.hwnd, msg.message, msg.wparam) {
+                force_exit(0);
+            }
+        }
+        CallNextHookEx(
+            HOOK_MSG.load(std::sync::atomic::Ordering::SeqCst) as *mut std::ffi::c_void,
+            code,
+            wparam,
+            lparam,
+        )
+    }
+}
+
 pub fn boot(state: Signal<Ui>) {
     // Press handlers and timers are short-lived owners. Tasks spawned
     // directly from them are cancelled when the handler returns, so every
     // agent call is spawned under the component owner captured here.
     let _ = APP_OWNER.set(Owner::current());
     #[cfg(target_os = "windows")]
-    apply_windows_app_icon();
+    {
+        apply_windows_app_icon();
+        arm_windows_close_exit();
+    }
     // This process is only the GUI client. When the window's owner is
     // dropped (the window closed), exit so tailfile-nsh cannot linger
     // with no window and no tray. The agent is a different process.
