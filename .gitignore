@@ -13,3 +13,6 @@ gui-nsh/target/
 **/.tailfile-state/
 **/tailscaled.state
 *.tsbuildinfo
+
+# Go workspace checksum cache
+go.work.sum
