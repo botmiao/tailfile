@@ -30,6 +30,10 @@ type Config struct {
 	Ephemeral  bool
 	// Net is auto, system, or tsnet. Empty means auto.
 	Net string
+
+	// quietDefaults suppresses the default-root log line. Service control
+	// verbs other than install set it: their flags describe no running agent.
+	quietDefaults bool
 }
 
 var userHomeDir = os.UserHomeDir
@@ -96,7 +100,7 @@ func (c *Config) applyDefaults() error {
 		c.ChunkSize = defaultChunkSize
 	}
 	// TS_AUTHKEY is not copied onto Config. resolveAuthKey reads it at tsnet
-	// start so the environment wins over -authkey and over the ts-authkey file,
+	// start so the environment wins over --authkey and over the ts-authkey file,
 	// and so the key is not kept on the config struct just to be logged later.
 	if c.Owner == "" {
 		c.Owner = os.Getenv("TAILFILE_OWNER")
@@ -107,7 +111,7 @@ func (c *Config) applyDefaults() error {
 	case netSystem, netTsnet:
 		c.Net = strings.ToLower(c.Net)
 	default:
-		return fmt.Errorf("-net must be auto, system, or tsnet, not %q", c.Net)
+		return fmt.Errorf("--net must be auto, system, or tsnet, not %q", c.Net)
 	}
 	if c.StateDir == "" {
 		dir, err := DefaultStateDir(c.Hostname)
@@ -125,14 +129,20 @@ func (c *Config) applyDefaults() error {
 	if !c.Demo && len(c.ReadRoots) == 0 {
 		home, err := userHomeDir()
 		if err != nil {
-			return fmt.Errorf("no -read root and no home directory: %w", err)
+			return fmt.Errorf("no --read root and no home directory: %w", err)
 		}
 		dir, err := ensureShareDir(home)
 		if err != nil {
 			return fmt.Errorf("default read root: %w", err)
 		}
 		c.ReadRoots = []string{dir}
-		log.Printf("tailfile: read root defaulting to %s (read-only until -write is set)", dir)
+		if !c.quietDefaults {
+			if len(c.WriteRoots) == 0 {
+				log.Printf("tailfile: read root defaulting to %s (read-only until --write is set)", dir)
+			} else {
+				log.Printf("tailfile: read root defaulting to %s; writable: %s", dir, strings.Join(c.WriteRoots, ", "))
+			}
+		}
 	}
 	return nil
 }

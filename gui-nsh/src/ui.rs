@@ -683,13 +683,6 @@ fn action_toolbar(state: Signal<Ui>) -> impl IntoElement {
             move || state.get().preview_on,
             move || model::toggle_preview(state),
         ))
-        .child(tiny_text_btn("更多", move || {
-            state.update(|ui| ui.more_open = !ui.more_open);
-        }))
-        .child(when(
-            move || state.get().more_open,
-            move || more_menu(state),
-        ))
 }
 
 fn sort_btn(state: Signal<Ui>) -> impl IntoElement {
@@ -724,30 +717,6 @@ fn sort_btn(state: Signal<Ui>) -> impl IntoElement {
             .text_size(px(11.0))
             .text_color(move || theme().muted_foreground),
         )
-}
-
-fn more_menu(state: Signal<Ui>) -> impl IntoElement {
-    view()
-        .flex_row()
-        .items_center()
-        .gap(px(4.0))
-        .child(seg_mode(state, "push", "推送"))
-        .child(seg_mode(state, "pull", "拉取"))
-        .child(tiny_text_btn("导入", move || {
-            state.update(|ui| {
-                ui.status = "拖放文件到列表区域导入，或在设置中使用高级连接".into();
-                ui.more_open = false;
-            });
-        }))
-        .child(tiny_text_btn("清空剪贴板", move || {
-            model::clear_clipboard(state)
-        }))
-        .child(tiny_text_btn("缓存", move || {
-            model::cache_selected(state)
-        }))
-        .child(tiny_text_btn("显示缓存", move || {
-            model::reveal_cached(state)
-        }))
 }
 
 fn nav_controls(state: Signal<Ui>) -> impl IntoElement {
@@ -1047,9 +1016,8 @@ fn file_header() -> impl IntoElement {
 }
 
 fn row_selected(state: Signal<Ui>, pair: ReadSignal<(usize, api::Entry)>) -> bool {
-    let ui = state.get();
     let (orig, entry) = pair.get();
-    ui.selected == orig as i32 || ui.selected_paths.iter().any(|p| p == &entry.path)
+    model::is_row_selected(&state.get(), orig, &entry.path)
 }
 
 fn file_row(
@@ -1089,6 +1057,10 @@ fn file_row(
             {
                 if modifiers.ctrl || modifiers.cmd {
                     model::toggle_select_path(state, entry.path);
+                    return;
+                }
+                if modifiers.shift {
+                    model::select_range(state, orig as i32);
                     return;
                 }
                 clicks = (*c).max(1);
@@ -1192,6 +1164,10 @@ fn file_icon_tile(
             {
                 if modifiers.ctrl || modifiers.cmd {
                     model::toggle_select_path(state, entry.path);
+                    return;
+                }
+                if modifiers.shift {
+                    model::select_range(state, orig as i32);
                     return;
                 }
                 clicks = (*c).max(1);
@@ -1498,32 +1474,6 @@ fn tiny_text_btn(label: &'static str, on_press: impl Fn() + 'static) -> impl Int
         )
 }
 
-fn seg_mode(state: Signal<Ui>, mode: &'static str, label: &'static str) -> impl IntoElement {
-    button()
-        .flex_row()
-        .items_center()
-        .justify_center()
-        .px(px(8.0))
-        .h(px(30.0))
-        .rounded_md()
-        .cursor(Cursor::Pointer)
-        .bg(move || {
-            if state.get().mode == mode {
-                theme().primary
-            } else {
-                theme().secondary
-            }
-        })
-        .on_press(move || state.update(|ui| ui.mode = mode.to_owned()))
-        .child(text(label).text_size(px(12.0)).text_color(move || {
-            if state.get().mode == mode {
-                theme().primary_foreground
-            } else {
-                theme().secondary_foreground
-            }
-        }))
-}
-
 fn seg_icon(
     d: &'static str,
     active: impl Fn() -> bool + Clone + 'static,
@@ -1633,25 +1583,20 @@ fn settings_dialog(state: Signal<Ui>) -> impl IntoElement {
     )
 }
 
+/// Settings, grouped top to bottom: appearance, transfer (paste mode and
+/// cache directory), agent connection, auth key.
+/// Edits are a draft until Apply (stay open) or Save (close); Cancel,
+/// Escape, the close button, and the backdrop discard them.
 fn settings_card(state: Signal<Ui>) -> impl IntoElement {
-    let auth = field(
-        420.0,
-        "tskey-auth-…",
-        move || state.get().auth_input.clone(),
-        move |text: &str| {
-            let text = text.to_owned();
-            state.update(|ui| ui.auth_input = text);
-        },
-    )
-    .masked(true);
     dialog()
         .close_on_escape(true)
         .close_on_backdrop_press(true)
-        .on_cancel(move || state.update(|ui| ui.settings_open = false))
+        .on_cancel(move || model::cancel_settings(state))
         .child(
             view().flex_1().items_center().justify_center().child(
                 card()
-                    .w(px(460.0))
+                    .w(px(SETTINGS_W))
+                    .gap(px(14.0))
                     .child(
                         view()
                             .flex_row()
@@ -1662,56 +1607,257 @@ fn settings_card(state: Signal<Ui>) -> impl IntoElement {
                                     .text_size(px(16.0))
                                     .flex_1(),
                             )
-                            .child(icon_btn(ip::X, move || {
-                                state.update(|ui| ui.settings_open = false);
-                            })),
+                            .child(icon_btn(ip::X, move || model::cancel_settings(state))),
                     )
-                    .child(text("外观").text_size(px(12.0)).text_color(move || theme().muted_foreground))
-                    .child(
+                    .child(settings_section("外观"))
+                    .child(form_row(
+                        "主题",
                         view()
                             .flex_row()
-                            .gap(px(6.0))
-                            .child(cmd("跟随系统", false, move || model::set_theme(state, ThemePref::System)))
-                            .child(cmd("浅色", false, move || model::set_theme(state, ThemePref::Light)))
-                            .child(cmd("深色", false, move || model::set_theme(state, ThemePref::Dark))),
-                    )
-                    .child(text(move || net_line(&state.get())).text_size(px(13.0)))
-                    .child(text("高级 · Agent 连接").text_size(px(12.0)).text_color(move || theme().muted_foreground))
-                    .child(field(420.0, "http://127.0.0.1:8645", move || state.get().addr.clone(), move |text: &str| {
-                        let text = text.to_owned();
-                        state.update(|ui| ui.addr = text);
-                    }))
-                    .child(cmd("连接 / 刷新", false, move || model::refresh(state)))
-                    .child(
-                        text(move || {
-                            if state.get().auth_configured {
-                                "Auth key：已配置。agent 不会把 key 发回来。"
-                            } else {
-                                "Auth key：未配置。agent 不会把 key 发回来。"
-                            }
-                        })
-                        .text_size(px(12.0))
-                        .text_color(move || theme().muted_foreground),
-                    )
-                    .child(auth)
-                    .child(
-                        view()
-                            .flex_row()
-                            .gap(px(8.0))
-                            .child(cmd("保存", true, move || model::save_auth_key(state)))
-                            .child(cmd("清除", false, move || model::clear_auth_key(state))),
-                    )
-                    .child(when(
-                        move || !state.get().settings_note.is_empty(),
-                        move || text(move || state.get().settings_note.clone()).text_size(px(12.0)),
+                            .child(segmented(
+                                theme_option(state, ThemePref::System),
+                                theme_option(state, ThemePref::Light),
+                                theme_option(state, ThemePref::Dark),
+                            )),
                     ))
+                    .child(section_divider())
+                    .child(settings_section("传输"))
+                    .child(form_row(
+                        "粘贴方式",
+                        view()
+                            .gap(px(6.0))
+                            .child(view().flex_row().child(segmented2(
+                                mode_option(state, "push", "推送"),
+                                mode_option(state, "pull", "拉取"),
+                            )))
+                            .child(
+                                text("推送由源节点发起，把文件写到目标；拉取由目标节点发起，从源节点读取。")
+                                    .w(px(SETTINGS_FIELD_W))
+                                    .text_size(px(12.0))
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    ))
+                    .child(form_row(
+                        "缓存目录",
+                        view()
+                            .gap(px(6.0))
+                            .child(
+                                view()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .child(field(
+                                        SETTINGS_ADDR_W,
+                                        "留空使用默认目录",
+                                        move || state.get().draft_cache_dir.clone(),
+                                        move |text: &str| model::set_draft_cache_dir(state, text),
+                                    ))
+                                    .child(view().w(px(TEST_BTN_W)).child(dialog_btn(
+                                        "打开",
+                                        BtnKind::Secondary,
+                                        move || !state.get().cache_dir.is_empty(),
+                                        move || model::open_cache_dir(state),
+                                    ))),
+                            )
+                            .child(
+                                text(move || cache_dir_help(&state.get()))
+                                    .w(px(SETTINGS_FIELD_W))
+                                    .text_size(px(12.0))
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    ))
+                    .child(section_divider())
+                    .child(settings_section("Agent 连接"))
+                    .child(form_row(
+                        "地址",
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(field(
+                                SETTINGS_ADDR_W,
+                                "http://127.0.0.1:8645",
+                                move || state.get().draft_addr.clone(),
+                                move |text: &str| model::set_draft_addr(state, text),
+                            ))
+                            .child(view().w(px(TEST_BTN_W)).child(dialog_btn(
+                                "测试连接",
+                                BtnKind::Secondary,
+                                || true,
+                                move || model::test_draft_connection(state),
+                            ))),
+                    ))
+                    .child(form_row(
+                        "网络模式",
+                        view().h(px(32.0)).justify_center().child(
+                            text(move || net_value(&state.get())).text_size(px(13.0)),
+                        ),
+                    ))
+                    .child(section_divider())
+                    .child(settings_section("Tailscale 认证"))
+                    .child(form_row(
+                        "Auth key",
+                        view()
+                            .gap(px(8.0))
+                            .child(
+                                view().h(px(32.0)).justify_center().child(
+                                    text(move || {
+                                        let ui = state.get();
+                                        match (ui.auth_configured, ui.draft_clear_auth) {
+                                            (true, true) => "已配置，应用后删除",
+                                            (true, false) => "已配置（agent 不会把 key 发回来）",
+                                            (false, _) => "未配置",
+                                        }
+                                    })
+                                    .text_size(px(13.0)),
+                                ),
+                            )
+                            .child(
+                                field(
+                                    SETTINGS_FIELD_W,
+                                    "输入新的 tskey-auth-…",
+                                    move || state.get().auth_input.clone(),
+                                    move |text: &str| model::set_draft_auth(state, text),
+                                )
+                                .masked(true),
+                            )
+                            .child(when(
+                                move || state.get().auth_configured,
+                                move || clear_auth_box(state),
+                            ))
+                            .child(
+                                text("保存在 agent 状态目录的 ts-authkey，重启 agent 后生效。若设置了 TS_AUTHKEY，环境变量优先。")
+                                    .w(px(SETTINGS_FIELD_W))
+                                    .text_size(px(12.0))
+                                    .text_color(move || theme().muted_foreground),
+                            ),
+                    ))
+                    .child(section_divider())
                     .child(
-                        text("保存在 agent 状态目录的 ts-authkey。重启 agent 后生效。若设置了 TS_AUTHKEY，环境变量优先。")
-                            .text_size(px(12.0))
-                            .text_color(move || theme().muted_foreground),
+                        view()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(8.0))
+                            .child(
+                                text(move || state.get().settings_note.clone())
+                                    .flex_1()
+                                    .text_size(px(12.0))
+                                    .text_color(move || theme().muted_foreground),
+                            )
+                            .child(dialog_btn(
+                                "应用",
+                                BtnKind::Secondary,
+                                move || model::settings_dirty(&state.get()),
+                                move || {
+                                    model::apply_settings(state);
+                                },
+                            ))
+                            .child(dialog_btn(
+                                "保存",
+                                BtnKind::Primary,
+                                || true,
+                                move || model::save_settings(state),
+                            ))
+                            .child(dialog_btn(
+                                "取消",
+                                BtnKind::Secondary,
+                                || true,
+                                move || model::cancel_settings(state),
+                            )),
                     ),
             ),
         )
+}
+
+const SETTINGS_W: f32 = 540.0;
+const SETTINGS_LABEL_W: f32 = 88.0;
+/// Card width minus border (2 × 1), padding (2 × 16), label, and the 12 px
+/// row gap.
+const SETTINGS_FIELD_W: f32 = SETTINGS_W - 2.0 - 32.0 - SETTINGS_LABEL_W - 12.0;
+/// The address field leaves room for the 8 px gap and the test button.
+const SETTINGS_ADDR_W: f32 = SETTINGS_FIELD_W - 8.0 - TEST_BTN_W;
+const TEST_BTN_W: f32 = 76.0;
+
+fn settings_section(title: &'static str) -> impl IntoElement {
+    text(title)
+        .font_weight(FontWeight::SEMIBOLD)
+        .text_size(px(13.0))
+}
+
+fn section_divider() -> impl IntoElement {
+    view().h(px(1.0)).bg(move || theme().border)
+}
+
+/// Label on the left, control column on the right.
+fn form_row(label: &'static str, control: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_row()
+        .items_start()
+        .gap(px(12.0))
+        .child(
+            view()
+                .w(px(SETTINGS_LABEL_W))
+                .h(px(32.0))
+                .justify_center()
+                .child(
+                    text(label)
+                        .text_size(px(13.0))
+                        .text_color(move || theme().muted_foreground),
+                ),
+        )
+        .child(view().flex_1().child(control))
+}
+
+fn theme_option(state: Signal<Ui>, pref: ThemePref) -> impl IntoElement {
+    let label = pref.label();
+    let selected = pref.clone();
+    seg_option(
+        label,
+        move || state.get().draft_theme == selected,
+        move || model::set_draft_theme(state, pref.clone()),
+    )
+}
+
+fn mode_option(state: Signal<Ui>, mode: &'static str, label: &'static str) -> impl IntoElement {
+    seg_option(
+        label,
+        move || state.get().draft_mode == mode,
+        move || model::set_draft_mode(state, mode),
+    )
+}
+
+pub fn cache_dir_help(ui: &Ui) -> String {
+    let fm = model::file_manager_name();
+    if ui.cache_dir_default.is_empty() {
+        format!("在{fm}中显示远程文件时，先下载到这里。")
+    } else {
+        format!(
+            "在{fm}中显示远程文件时，先下载到这里。留空恢复默认：{}",
+            ui.cache_dir_default
+        )
+    }
+}
+
+fn clear_auth_box(state: Signal<Ui>) -> impl IntoElement {
+    checkbox()
+        .checked(move || state.get().draft_clear_auth)
+        .on_change(move |_: &bool| model::toggle_draft_clear_auth(state))
+        .indicator(
+            view()
+                .w(px(16.0))
+                .h(px(16.0))
+                .rounded_sm()
+                .border_1()
+                .border_color(move || theme().border)
+                .items_center()
+                .justify_center()
+                .bg(move || theme().background)
+                .child(
+                    text(move || if state.get().draft_clear_auth { "✓" } else { "" })
+                        .text_size(px(12.0)),
+                ),
+        )
+        .child(text("应用时删除已保存的 key").text_size(px(13.0)))
 }
 
 fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
@@ -1752,7 +1898,7 @@ fn context_menu_overlay(state: Signal<Ui>) -> impl IntoElement {
                                     .gap(px(2.0))
                                     .child(ctx_item(
                                         ip::FOLDER,
-                                        "打开",
+                                        if selected_is_dir(state) { "打开" } else { reveal_label() },
                                         "Enter",
                                         false,
                                         move || model::open_selected(state),
@@ -1842,6 +1988,21 @@ fn ctx_divider() -> impl IntoElement {
         .my(px(2.0))
         .mx(px(4.0))
         .bg(move || theme().border)
+}
+
+fn selected_is_dir(state: Signal<Ui>) -> bool {
+    model::selected(&state.get()).map(|e| e.is_dir).unwrap_or(false)
+}
+
+/// Menu label for opening a file: fetch it and reveal it locally.
+fn reveal_label() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "在访达中显示"
+    } else if cfg!(target_os = "windows") {
+        "在资源管理器中显示"
+    } else {
+        "在文件管理器中显示"
+    }
 }
 
 fn ctx_item(
@@ -1959,20 +2120,11 @@ fn daemon_dialog(state: Signal<Ui>) -> impl IntoElement {
                                 })
                                 .text_size(px(12.0)),
                             )
-                            .child(
-                                view()
-                                    .flex_row()
-                                    .gap(px(6.0))
-                                    .child(cmd("Linux", false, move || {
-                                        state.update(|ui| ui.daemon_os = "linux".into())
-                                    }))
-                                    .child(cmd("Windows", false, move || {
-                                        state.update(|ui| ui.daemon_os = "windows".into())
-                                    }))
-                                    .child(cmd("macOS", false, move || {
-                                        state.update(|ui| ui.daemon_os = "macos".into())
-                                    })),
-                            )
+                            .child(view().flex_row().child(segmented(
+                                daemon_os_option(state, "linux", "Linux"),
+                                daemon_os_option(state, "windows", "Windows"),
+                                daemon_os_option(state, "macos", "macOS"),
+                            )))
                             .child(
                                 text(move || {
                                     let ui = state.get();
@@ -2098,15 +2250,20 @@ pub fn crumbs(ui: &Ui) -> Vec<Crumb> {
 }
 
 pub fn net_line(ui: &Ui) -> String {
+    format!("网络模式：{}", net_value(ui))
+}
+
+/// The resolved network mode, plus the requested `--net` when it differs.
+pub fn net_value(ui: &Ui) -> String {
     let mode = if ui.net_mode.is_empty() {
         "…".to_owned()
     } else {
         ui.net_mode.clone()
     };
     if !ui.net_requested.is_empty() && ui.net_requested != ui.net_mode {
-        format!("网络模式：{mode}（请求的 -net：{}）", ui.net_requested)
+        format!("{mode}（请求的 --net：{}）", ui.net_requested)
     } else {
-        format!("网络模式：{mode}")
+        mode
     }
 }
 
@@ -2121,20 +2278,143 @@ fn card() -> nsh_core::element::View {
 }
 
 fn cmd(label: &'static str, primary: bool, on_press: impl Fn() + 'static) -> impl IntoElement {
+    let kind = if primary { BtnKind::Primary } else { BtnKind::Secondary };
+    dialog_btn(label, kind, || true, on_press)
+}
+
+fn cmd_label(
+    label: impl Fn() -> String + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    btn_shell(BtnKind::Secondary, || true, on_press).child(
+        text(label)
+            .text_size(px(13.0))
+            .text_color(move || theme().secondary_foreground),
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BtnKind {
+    Primary,
+    Secondary,
+}
+
+/// The hovered shade of a filled button: darker in light mode, lighter in
+/// dark mode, so the change reads on either background.
+fn hover_shade(c: AdaptiveColor, amount: f32) -> AdaptiveColor {
+    AdaptiveColor {
+        light: c.light.darken(amount * 0.6),
+        dark: c.dark.lighten(amount),
+    }
+}
+
+fn btn_bg(kind: BtnKind, hot: bool, enabled: bool) -> AdaptiveColor {
+    let t = theme();
+    match (kind, enabled, hot) {
+        (_, false, _) => t.secondary.opacity(0.6),
+        (BtnKind::Primary, true, false) => t.primary,
+        (BtnKind::Primary, true, true) => hover_shade(t.primary, 0.14),
+        (BtnKind::Secondary, true, false) => t.secondary,
+        (BtnKind::Secondary, true, true) => hover_shade(t.secondary, 0.22),
+    }
+}
+
+/// A filled dialog button without its label: pointer cursor, hover shade,
+/// and a dimmed look while `enabled` is false.
+fn btn_shell(
+    kind: BtnKind,
+    enabled: impl Fn() -> bool + Clone + 'static,
+    on_press: impl Fn() + 'static,
+) -> nsh_base::ButtonElement {
+    let enabled_bg = enabled.clone();
     button()
-        .px(px(10.0))
-        .py(px(6.0))
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .min_w(px(64.0))
+        .h(px(30.0))
+        .px(px(12.0))
         .rounded_md()
+        .cursor(Cursor::Pointer)
+        .bg(move || btn_bg(kind, false, enabled_bg()))
+        .hover(move |s| s.bg(btn_bg(kind, true, true)))
+        .disabled_style(move |s| s.bg(btn_bg(kind, false, false)))
+        .disabled(move || !enabled())
+        .on_press(on_press)
+}
+
+fn dialog_btn(
+    label: &'static str,
+    kind: BtnKind,
+    enabled: impl Fn() -> bool + Clone + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let enabled_fg = enabled.clone();
+    btn_shell(kind, enabled, on_press).child(text(label).text_size(px(13.0)).text_color(move || {
+        match (kind, enabled_fg()) {
+            (_, false) => theme().muted_foreground,
+            (BtnKind::Primary, true) => theme().primary_foreground,
+            (BtnKind::Secondary, true) => theme().secondary_foreground,
+        }
+    }))
+}
+
+/// Three mutually exclusive options in one track; the chosen one is
+/// filled with the primary color.
+fn segmented(a: impl IntoElement, b: impl IntoElement, c: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_row()
+        .gap(px(2.0))
+        .p(px(2.0))
+        .rounded_md()
+        .bg(move || theme().secondary)
+        .child(a)
+        .child(b)
+        .child(c)
+}
+
+fn segmented2(a: impl IntoElement, b: impl IntoElement) -> impl IntoElement {
+    view()
+        .flex_row()
+        .gap(px(2.0))
+        .p(px(2.0))
+        .rounded_md()
+        .bg(move || theme().secondary)
+        .child(a)
+        .child(b)
+}
+
+fn seg_option(
+    label: &'static str,
+    selected: impl Fn() -> bool + Clone + 'static,
+    on_press: impl Fn() + 'static,
+) -> impl IntoElement {
+    let hot = signal(false);
+    let selected_bg = selected.clone();
+    let selected_fg = selected;
+    view()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .min_w(px(72.0))
+        .h(px(28.0))
+        .px(px(12.0))
+        .rounded_md()
+        .cursor(Cursor::Pointer)
         .bg(move || {
-            if primary {
+            if selected_bg() {
                 theme().primary
+            } else if hot.get() {
+                hover_shade(theme().secondary, 0.22)
             } else {
-                theme().secondary
+                theme().secondary.opacity(0.0)
             }
         })
+        .on_hover_in(move |_: &()| hot.set(true))
+        .on_hover_out(move |_: &()| hot.set(false))
         .on_press(on_press)
         .child(text(label).text_size(px(13.0)).text_color(move || {
-            if primary {
+            if selected_fg() {
                 theme().primary_foreground
             } else {
                 theme().secondary_foreground
@@ -2142,21 +2422,12 @@ fn cmd(label: &'static str, primary: bool, on_press: impl Fn() + 'static) -> imp
         }))
 }
 
-fn cmd_label(
-    label: impl Fn() -> String + 'static,
-    on_press: impl Fn() + 'static,
-) -> impl IntoElement {
-    button()
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded_md()
-        .bg(move || theme().secondary)
-        .on_press(on_press)
-        .child(
-            text(label)
-                .text_size(px(13.0))
-                .text_color(move || theme().secondary_foreground),
-        )
+fn daemon_os_option(state: Signal<Ui>, os: &'static str, label: &'static str) -> impl IntoElement {
+    seg_option(
+        label,
+        move || state.get().daemon_os == os,
+        move || state.update(|ui| ui.daemon_os = os.into()),
+    )
 }
 
 fn field(

@@ -220,7 +220,6 @@ func (s *Server) rename(roots Roots, from, to string) error {
 	return os.Rename(src, dst)
 }
 
-
 func (s *Server) Delete(path string) error {
 	return s.deletePath(s.roots, path)
 }
@@ -263,8 +262,10 @@ func (s *Server) deletePath(roots Roots, path string) error {
 func isConfiguredRoot(roots Roots, path string) bool {
 	path = filepath.Clean(path)
 	for _, root := range append(append([]string{}, roots.Read...), roots.Write...) {
-		if filepath.Clean(root) == path {
-			return true
+		for _, form := range rootForms(root) {
+			if form == path {
+				return true
+			}
 		}
 	}
 	return false

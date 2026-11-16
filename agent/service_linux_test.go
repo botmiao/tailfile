@@ -25,7 +25,7 @@ func TestUserSystemdUnitIsPerUser(t *testing.T) {
 		DisplayName: "Tailfile Agent",
 		Description: "per user",
 		Executable:  "/usr/bin/tailfile-agent",
-		Arguments:   []string{"-net", "system"},
+		Arguments:   []string{"--net", "system"},
 		StateDir:    t.TempDir(),
 	})
 	if err != nil {

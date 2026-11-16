@@ -101,27 +101,18 @@ func hostIsLoopback(hostport string) bool {
 }
 
 // originAllowed reports whether an Origin header may call the local API.
-// Native Shell (gui-nsh) sends an empty Origin; the bearer check still applies.
+// Native Shell (gui-nsh) sends an empty Origin or nsh://tailfile; the bearer
+// check still applies. No browser origin is accepted: the old web dev
+// frontend (http://127.0.0.1:17431) is gone.
 func originAllowed(origin string) bool {
 	if origin == "" {
 		return false
 	}
 	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" && u.Scheme != "nsh" {
+	if err != nil || !strings.EqualFold(u.Scheme, "nsh") {
 		return false
 	}
-	switch strings.ToLower(u.Scheme) {
-	case "nsh":
-		return strings.EqualFold(u.Host, "tailfile") || u.Host == ""
-	case "http":
-		host := strings.Trim(u.Hostname(), "[]")
-		if host != "127.0.0.1" && !strings.EqualFold(host, "localhost") && host != "::1" {
-			return false
-		}
-		return u.Port() == "17431"
-	default:
-		return false
-	}
+	return strings.EqualFold(u.Host, "tailfile") || u.Host == ""
 }
 
 func (s *Server) allowLocal(r *http.Request) error {
@@ -217,7 +208,7 @@ func intersectRoots(nodeRoots, grantRoots []string) []string {
 
 // ResolveOwner decides which tailnet login may call this node.
 // A tagged node (or the tagged-devices user) has no human owner; starting
-// without -owner would lock the node to a login nobody has.
+// without --owner would lock the node to a login nobody has.
 func ResolveOwner(login string, tagged bool, configured string) (string, error) {
 	if strings.TrimSpace(configured) != "" {
 		return configured, nil
@@ -227,7 +218,7 @@ func ResolveOwner(login string, tagged bool, configured string) (string, error) 
 		if shown == "" {
 			shown = "tagged-devices"
 		}
-		return "", statusErr(1, "this node is tagged (tailnet user %q) and has no human owner; set -owner or TAILFILE_OWNER to the login allowed to call it", shown)
+		return "", statusErr(1, "this node is tagged (tailnet user %q) and has no human owner; set --owner or TAILFILE_OWNER to the login allowed to call it", shown)
 	}
 	return login, nil
 }

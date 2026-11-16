@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"tailfile.local/agent"
+	"tailfile.local/agent/cliflag"
 )
 
 func main() {
@@ -58,18 +59,16 @@ func parseConfig(args []string) (agent.Config, error) {
 	fs.StringVar(&cfg.AuthKey, "authkey", "", "tsnet auth key (prefer TS_AUTHKEY or the settings file; never commit it)")
 	fs.IntVar(&cfg.ChunkSize, "chunk", 0, "upload chunk size in bytes")
 	fs.BoolVar(&cfg.Ephemeral, "ephemeral", false, "register an ephemeral tsnet node")
-	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "Usage: tailfile-agent [flags]\n")
-		fmt.Fprintf(fs.Output(), "       tailfile-agent service install|uninstall|start|stop|status [flags]\n\n")
-		fs.PrintDefaults()
-	}
+	fs.Usage = cliflag.Usage(fs,
+		"Usage: tailfile-agent [flags]",
+		"       tailfile-agent service install|uninstall|start|stop|status [flags]")
 	if err := fs.Parse(args); err != nil {
 		return agent.Config{}, err
 	}
 	cfg.ReadRoots = splitList(read)
 	cfg.WriteRoots = splitList(write)
 	if cfg.AuthKey != "" {
-		fmt.Fprintln(os.Stderr, "tailfile: -authkey was set; prefer TS_AUTHKEY or the settings screen so the key stays out of shell history and the service command")
+		fmt.Fprintln(os.Stderr, "tailfile: --authkey was set; prefer TS_AUTHKEY or the settings screen so the key stays out of shell history and the service command")
 	}
 	return cfg, nil
 }

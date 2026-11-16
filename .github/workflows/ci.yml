@@ -45,7 +45,7 @@ jobs:
           (cd agent && GOWORK=off go build -o /tmp/tailfile-agent ./cmd/tailfile-agent)
           rm -rf /tmp/tf-nsh-ci
           mkdir -p /tmp/tf-nsh-ci
-          /tmp/tailfile-agent -demo -state /tmp/tf-nsh-ci -listen 127.0.0.1:8645 >/tmp/tf-agent.log 2>&1 &
+          /tmp/tailfile-agent --demo --state /tmp/tf-nsh-ci --listen 127.0.0.1:8645 >/tmp/tf-agent.log 2>&1 &
           echo $! >/tmp/tf-agent.pid
           for i in $(seq 1 50); do
             if [ -s /tmp/tf-nsh-ci/gui-token ]; then
@@ -55,7 +55,7 @@ jobs:
           done
           test -s /tmp/tf-nsh-ci/gui-token
           set +e
-          xvfb-run -a timeout 8s "$GITHUB_WORKSPACE/gui-nsh/target/release/tailfile-nsh" -agent http://127.0.0.1:8645 -state /tmp/tf-nsh-ci
+          xvfb-run -a timeout 8s "$GITHUB_WORKSPACE/gui-nsh/target/release/tailfile-nsh" --agent http://127.0.0.1:8645 --state /tmp/tf-nsh-ci
           code=$?
           set -e
           kill "$(cat /tmp/tf-agent.pid)" || true

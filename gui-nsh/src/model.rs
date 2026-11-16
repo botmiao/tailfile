@@ -109,8 +109,20 @@ pub struct Ui {
     pub auth_configured: bool,
     pub auth_input: String,
     pub settings_note: String,
-    pub drag_note: String,
-    pub drag_path: String,
+    /// Settings dialog draft. Nothing here takes effect until Apply or Save;
+    /// Cancel, Escape, and the backdrop drop it.
+    pub draft_theme: ThemePref,
+    pub draft_addr: String,
+    /// Delete the saved auth key on Apply. Typing a new key clears it.
+    pub draft_clear_auth: bool,
+    /// Paste transfer mode draft ("push" / "pull").
+    pub draft_mode: String,
+    /// The agent's cache directory in effect and its default. Empty until
+    /// the agent's settings arrive.
+    pub cache_dir: String,
+    pub cache_dir_default: String,
+    /// Cache directory draft. Empty means the default.
+    pub draft_cache_dir: String,
     pub list_gen: u64,
     pub preview_gen: u64,
     pub alive: bool,
@@ -192,8 +204,13 @@ impl Ui {
             auth_configured: false,
             auth_input: String::new(),
             settings_note: String::new(),
-            drag_note: String::new(),
-            drag_path: String::new(),
+            draft_theme: ThemePref::System,
+            draft_addr: String::new(),
+            draft_clear_auth: false,
+            draft_mode: "push".to_owned(),
+            cache_dir: String::new(),
+            cache_dir_default: String::new(),
+            draft_cache_dir: String::new(),
             list_gen: 0,
             preview_gen: 0,
             alive: false,
@@ -680,6 +697,7 @@ pub fn boot(state: Signal<Ui>) {
     set_interval(Duration::from_secs(1), move || poll(state));
     on_key("mod+c", move |_| copy_selected(state));
     on_key("mod+v", move |_| paste(state));
+    on_key("mod+a", move |_| select_all(state));
     on_key("mod+r", move |_| refresh(state));
     on_key("mod+shift+n", move |_| begin_new_folder(state));
     on_key("f2", move |_| begin_rename(state));
@@ -703,6 +721,7 @@ pub fn boot(state: Signal<Ui>) {
             ui.delete_open = false;
             ui.daemon_open = false;
             ui.settings_open = false;
+            ui.auth_input.clear();
             ui.ctx_open = false;
             ui.more_open = false;
         });
@@ -805,7 +824,7 @@ pub fn refresh(state: Signal<Ui>) {
             Err(err) => state.update(|ui| {
                 ui.alive = false;
                 ui.err = err;
-                ui.status = "agent 没有在运行。请先启动 tailfile-agent（或 tailfile-agent -demo），然后点刷新。".into();
+                ui.status = "agent 没有在运行。请先启动 tailfile-agent（或 tailfile-agent --demo），然后点刷新。".into();
             }),
         }
         },
@@ -1070,7 +1089,7 @@ pub fn open_selected(state: Signal<Ui>) {
     if entry.is_dir {
         enter_row_dir(state, ui.selected);
     } else {
-        cache_selected(state);
+        reveal_selected(state);
     }
 }
 
@@ -1390,14 +1409,29 @@ fn import_paths(state: Signal<Ui>, paths: Vec<String>) {
     );
 }
 
-pub fn cache_selected(state: Signal<Ui>) {
+/// The platform's file manager, for menu labels and status text.
+pub fn file_manager_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "访达"
+    } else if cfg!(target_os = "windows") {
+        "资源管理器"
+    } else {
+        "文件管理器"
+    }
+}
+
+/// Copies the selected file into the agent's cache directory (a file on
+/// this machine is used in place) and reveals it in the file manager.
+/// Native Shell cannot drag files out to the desktop, so this is how a
+/// remote file reaches local apps.
+pub fn reveal_selected(state: Signal<Ui>) {
     let ui = state.get();
     let Some(entry) = selected(&ui) else {
-        state.update(|ui| ui.status = "请选择要缓存的文件".into());
+        state.update(|ui| ui.status = "请选择一个文件".into());
         return;
     };
     if entry.is_dir {
-        state.update(|ui| ui.status = "请选择要缓存的文件".into());
+        state.update(|ui| ui.status = "请选择一个文件".into());
         return;
     }
     let node = ui.folder_node.clone();
@@ -1405,38 +1439,21 @@ pub fn cache_selected(state: Signal<Ui>) {
     let name = entry.name.clone();
     let base = ui.addr.clone();
     let token = ui.token.clone();
+    state.update(|ui| ui.status = format!("正在获取 {name}…"));
     offload(
         state,
-        move || Client::new(base, token).cache(&node, &path),
-        move |state, result| {
-            match result {
+        move || {
+            let client = Client::new(base, token);
+            let local = client.cache(&node, &path)?;
+            client.reveal(&local)?;
+            Ok(local)
+        },
+        move |state, result| match result {
             Ok(local) => state.update(|ui| {
-                ui.drag_path = local.clone();
-                ui.drag_note = format!("已缓存 {name}。本机路径：{local}。Native Shell 没有把本地文件拖出到系统文件管理器的接口，请点「显示」。");
-                ui.status = ui.drag_note.clone();
+                ui.status = format!("已在{}中显示 {name}（{local}）", file_manager_name());
                 ui.err.clear();
             }),
             Err(err) => state.update(|ui| ui.err = err),
-        }
-        },
-    );
-}
-
-pub fn reveal_cached(state: Signal<Ui>) {
-    let path = state.get().drag_path.clone();
-    if path.is_empty() {
-        state.update(|ui| ui.status = "请先缓存文件".into());
-        return;
-    }
-    let base = state.get().addr.clone();
-    let token = state.get().token.clone();
-    offload(
-        state,
-        move || Client::new(base, token).reveal(&path),
-        |state, result| {
-            if let Err(err) = result {
-                state.update(|ui| ui.err = err);
-            }
         },
     );
 }
@@ -1679,8 +1696,7 @@ pub fn resume_transfer(state: Signal<Ui>, id: String) {
 pub fn open_settings(state: Signal<Ui>) {
     state.update(|ui| {
         ui.settings_open = true;
-        ui.auth_input.clear();
-        ui.settings_note.clear();
+        reset_settings_draft(ui);
     });
     let base = state.get().addr.clone();
     let token = state.get().token.clone();
@@ -1692,10 +1708,255 @@ pub fn open_settings(state: Signal<Ui>) {
                 ui.net_mode = settings.net;
                 ui.net_requested = settings.net_requested;
                 ui.auth_configured = settings.auth_key_configured;
+                note_cache_dir(ui, settings.cache_dir, settings.cache_dir_default);
             }),
             Err(err) => state.update(|ui| ui.settings_note = err),
         },
     );
+}
+
+fn reset_settings_draft(ui: &mut Ui) {
+    ui.draft_theme = ui.theme.clone();
+    ui.draft_addr = ui.addr.clone();
+    ui.draft_clear_auth = false;
+    ui.draft_mode = ui.mode.clone();
+    ui.draft_cache_dir = ui.cache_dir.clone();
+    ui.auth_input.clear();
+    ui.settings_note.clear();
+}
+
+/// Records the agent's cache directory. A draft still showing the old value
+/// follows the new one; a draft the user has edited is left alone.
+fn note_cache_dir(ui: &mut Ui, dir: String, default: String) {
+    if ui.draft_cache_dir == ui.cache_dir {
+        ui.draft_cache_dir = dir.clone();
+    }
+    ui.cache_dir = dir;
+    ui.cache_dir_default = default;
+}
+
+fn normalized_addr(raw: &str) -> String {
+    raw.trim().trim_end_matches('/').to_owned()
+}
+
+/// The cache directory the draft asks for: "" (the default) or a trimmed
+/// path without a trailing separator.
+fn normalized_cache_dir(raw: &str) -> String {
+    let p = raw.trim();
+    let trimmed = p.trim_end_matches(['/', '\\']);
+    if trimmed.is_empty() && !p.is_empty() {
+        // "/" itself.
+        return p[..1].to_owned();
+    }
+    trimmed.to_owned()
+}
+
+/// Whether the cache directory draft differs from the one in effect. False
+/// until the agent has reported its directory.
+pub fn cache_dir_dirty(ui: &Ui) -> bool {
+    if ui.cache_dir.is_empty() {
+        return false;
+    }
+    let want = normalized_cache_dir(&ui.draft_cache_dir);
+    let want = if want.is_empty() {
+        ui.cache_dir_default.as_str()
+    } else {
+        want.as_str()
+    };
+    want != ui.cache_dir
+}
+
+/// Whether the settings draft differs from what is in effect.
+pub fn settings_dirty(ui: &Ui) -> bool {
+    ui.draft_theme != ui.theme
+        || ui.draft_mode != ui.mode
+        || normalized_addr(&ui.draft_addr) != ui.addr
+        || cache_dir_dirty(ui)
+        || !ui.auth_input.trim().is_empty()
+        || ui.draft_clear_auth
+}
+
+pub fn set_draft_theme(state: Signal<Ui>, pref: ThemePref) {
+    state.update(|ui| ui.draft_theme = pref);
+}
+
+/// "push" or "pull"; anything else is ignored.
+pub fn set_draft_mode(state: Signal<Ui>, mode: &str) {
+    if mode != "push" && mode != "pull" {
+        return;
+    }
+    let mode = mode.to_owned();
+    state.update(|ui| ui.draft_mode = mode);
+}
+
+pub fn set_draft_addr(state: Signal<Ui>, text: &str) {
+    let text = text.to_owned();
+    state.update(|ui| ui.draft_addr = text);
+}
+
+pub fn set_draft_cache_dir(state: Signal<Ui>, text: &str) {
+    let text = text.to_owned();
+    state.update(|ui| ui.draft_cache_dir = text);
+}
+
+/// Opens the agent's cache directory (the one in effect) in the file manager.
+pub fn open_cache_dir(state: Signal<Ui>) {
+    let ui = state.get();
+    let base = ui.addr.clone();
+    let token = ui.token.clone();
+    offload(
+        state,
+        move || Client::new(base, token).open_cache_dir(),
+        |state, result| {
+            if let Err(err) = result {
+                state.update(|ui| ui.settings_note = format!("无法打开缓存目录：{err}"));
+            }
+        },
+    );
+}
+
+pub fn set_draft_auth(state: Signal<Ui>, text: &str) {
+    let text = text.to_owned();
+    state.update(|ui| {
+        if !text.is_empty() {
+            ui.draft_clear_auth = false;
+        }
+        ui.auth_input = text;
+    });
+}
+
+pub fn toggle_draft_clear_auth(state: Signal<Ui>) {
+    state.update(|ui| {
+        ui.draft_clear_auth = !ui.draft_clear_auth;
+        if ui.draft_clear_auth {
+            ui.auth_input.clear();
+        }
+    });
+}
+
+/// Checks the draft address without committing it.
+pub fn test_draft_connection(state: Signal<Ui>) {
+    let ui = state.get();
+    let base = normalized_addr(&ui.draft_addr);
+    if base.is_empty() {
+        state.update(|ui| ui.settings_note = "agent 地址不能为空".into());
+        return;
+    }
+    let token = ui.token.clone();
+    state.update(|ui| ui.settings_note = format!("正在连接 {base}…"));
+    let shown = base.clone();
+    offload(
+        state,
+        move || Client::new(base, token).health(),
+        move |state, result| {
+            state.update(|ui| {
+                ui.settings_note = match result {
+                    Ok(()) => format!("{shown} 可以连接"),
+                    Err(err) => format!("无法连接 {shown}：{err}"),
+                }
+            })
+        },
+    );
+}
+
+/// Commits the settings draft. Returns false when the draft is invalid, so
+/// Save keeps the dialog open to show why.
+pub fn apply_settings(state: Signal<Ui>) -> bool {
+    let ui = state.get();
+    let addr = normalized_addr(&ui.draft_addr);
+    if addr.is_empty() {
+        state.update(|ui| ui.settings_note = "agent 地址不能为空".into());
+        return false;
+    }
+    let key = ui.auth_input.trim().to_owned();
+    if key.contains('\n') || key.contains('\r') {
+        state.update(|ui| ui.settings_note = "key 不能包含换行".into());
+        return false;
+    }
+    let cache_dir = normalized_cache_dir(&ui.draft_cache_dir);
+    if cache_dir.contains('\n') || cache_dir.contains('\r') {
+        state.update(|ui| ui.settings_note = "缓存目录不能包含换行".into());
+        return false;
+    }
+    let theme_changed = ui.draft_theme != ui.theme;
+    let mode_changed = ui.draft_mode != ui.mode;
+    let addr_changed = addr != ui.addr;
+    let cache_changed = cache_dir_dirty(&ui);
+    let clear_auth = ui.draft_clear_auth;
+    if theme_changed {
+        set_theme(state, ui.draft_theme.clone());
+    }
+    state.update(|ui| {
+        ui.draft_addr = addr.clone();
+        ui.draft_clear_auth = false;
+        ui.settings_note.clear();
+        if mode_changed {
+            ui.mode = ui.draft_mode.clone();
+        }
+    });
+    if mode_changed {
+        persist_ui(state);
+    }
+    if addr_changed {
+        state.update(|ui| ui.addr = addr);
+        refresh(state);
+    }
+    if cache_changed {
+        save_cache_dir(state, cache_dir);
+    }
+    if !key.is_empty() {
+        save_auth_key(state);
+    } else if clear_auth {
+        clear_auth_key(state);
+    }
+    true
+}
+
+fn save_cache_dir(state: Signal<Ui>, dir: String) {
+    let ui = state.get();
+    let base = ui.addr.clone();
+    let token = ui.token.clone();
+    offload(
+        state,
+        move || Client::new(base, token).set_cache_dir(&dir),
+        |state, result| match result {
+            Ok(settings) => state.update(|ui| {
+                ui.cache_dir = settings.cache_dir.clone();
+                ui.cache_dir_default = settings.cache_dir_default;
+                ui.draft_cache_dir = settings.cache_dir;
+            }),
+            Err(err) => state.update(|ui| settings_result(ui, format!("缓存目录未更改：{err}"), true)),
+        },
+    );
+}
+
+/// Apply, then close.
+pub fn save_settings(state: Signal<Ui>) {
+    if apply_settings(state) {
+        state.update(|ui| ui.settings_open = false);
+    }
+}
+
+/// Drop the draft and close.
+pub fn cancel_settings(state: Signal<Ui>) {
+    state.update(|ui| {
+        ui.settings_open = false;
+        reset_settings_draft(ui);
+    });
+}
+
+/// Async settings results (auth key, cache directory) can land after Save
+/// closed the dialog; surface them in the status bar then, since the dialog
+/// note is no longer visible.
+fn settings_result(ui: &mut Ui, note: String, failed: bool) {
+    if !ui.settings_open {
+        if failed {
+            ui.err = note.clone();
+        } else {
+            ui.status = note.clone();
+        }
+    }
+    ui.settings_note = note;
 }
 
 pub fn save_auth_key(state: Signal<Ui>) {
@@ -1714,9 +1975,9 @@ pub fn save_auth_key(state: Signal<Ui>) {
             match result {
             Ok(status) => state.update(|ui| {
                 ui.auth_configured = status.configured;
-                ui.settings_note = "已保存。需要重启 agent 后才会使用。界面不会回显 key。若设置了 TS_AUTHKEY，环境变量优先。".into();
+                settings_result(ui, "Auth key 已保存。需要重启 agent 后才会使用。界面不会回显 key。若设置了 TS_AUTHKEY，环境变量优先。".into(), false);
             }),
-            Err(err) => state.update(|ui| ui.settings_note = err),
+            Err(err) => state.update(|ui| settings_result(ui, err, true)),
         }
         },
     );
@@ -1732,9 +1993,9 @@ pub fn clear_auth_key(state: Signal<Ui>) {
         |state, result| match result {
             Ok(status) => state.update(|ui| {
                 ui.auth_configured = status.configured;
-                ui.settings_note = "已清除。需要重启 agent。".into();
+                settings_result(ui, "Auth key 已清除。需要重启 agent。".into(), false);
             }),
-            Err(err) => state.update(|ui| ui.settings_note = err),
+            Err(err) => state.update(|ui| settings_result(ui, err, true)),
         },
     );
 }
@@ -1792,6 +2053,7 @@ fn restore_persist(state: Signal<Ui>) {
         ui.restore_tabs = data.restore_tabs;
         ui.preview_on = data.preview_on;
         ui.sidebar_collapsed = data.sidebar_collapsed;
+        ui.mode = if data.transfer_mode == "pull" { "pull" } else { "push" }.to_owned();
         if data.restore_tabs {
             ui.tabs = data
                 .tabs
@@ -1840,6 +2102,7 @@ fn persist_ui(state: Signal<Ui>) {
         active_tab: ui.active_tab,
         preview_on: ui.preview_on,
         sidebar_collapsed: ui.sidebar_collapsed,
+        transfer_mode: ui.mode.clone(),
     };
     persist::save(&ui.state_dir, &data);
     token::save_preview_on(ui.preview_on);
@@ -1861,10 +2124,7 @@ pub fn toggle_sidebar(state: Signal<Ui>) {
 
 pub fn set_theme(state: Signal<Ui>, pref: ThemePref) {
     apply_theme_pref(pref.clone());
-    state.update(|ui| {
-        ui.theme = pref;
-        ui.settings_note = format!("外观：{}", ui.theme.label());
-    });
+    state.update(|ui| ui.theme = pref);
     persist_ui(state);
 }
 
@@ -2147,6 +2407,10 @@ pub fn begin_new_folder(state: Signal<Ui>) {
 
 pub fn begin_rename(state: Signal<Ui>) {
     let ui = state.get();
+    if ui.selected_paths.len() > 1 {
+        state.update(|ui| ui.status = "已选择多项，重命名一次只能改一项".into());
+        return;
+    }
     let Some(entry) = selected(&ui) else {
         state.update(|ui| ui.status = "请先选择要重命名的项目".into());
         return;
@@ -2301,13 +2565,96 @@ pub fn close_daemon_help(state: Signal<Ui>) {
     });
 }
 
+/// Whether row `index` is highlighted. With a multi-selection the set is
+/// the selection; otherwise the single focused row is.
+pub fn is_row_selected(ui: &Ui, index: usize, path: &str) -> bool {
+    if ui.selected_paths.is_empty() {
+        ui.selected == index as i32
+    } else {
+        ui.selected_paths.iter().any(|p| p == path)
+    }
+}
+
+/// Ctrl/Cmd-click: add or remove one item. The row picked by a plain click
+/// joins the set first, so what is highlighted is exactly what copy, paste
+/// and delete act on. Focus (preview, rename, Shift anchor) follows the
+/// item just added, or the last one left.
 pub fn toggle_select_path(state: Signal<Ui>, path: String) {
     state.update(|ui| {
-        if let Some(pos) = ui.selected_paths.iter().position(|p| p == &path) {
-            ui.selected_paths.remove(pos);
-        } else if !ui.folder_path.is_empty() && path_is_under(&path, &ui.folder_path) {
-            ui.selected_paths.push(path);
+        if ui.folder_path.is_empty() || !path_is_under(&path, &ui.folder_path) {
+            return;
         }
+        if ui.selected_paths.is_empty() {
+            if let Some(anchor) = selected(ui).map(|e| e.path) {
+                ui.selected_paths.push(anchor);
+            }
+        }
+        let focus = if let Some(pos) = ui.selected_paths.iter().position(|p| p == &path) {
+            ui.selected_paths.remove(pos);
+            ui.selected_paths.last().cloned()
+        } else {
+            ui.selected_paths.push(path);
+            ui.selected_paths.last().cloned()
+        };
+        ui.selected = focus
+            .and_then(|p| ui.entries.iter().position(|e| e.path == p))
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+        ui.ctx_open = false;
+        sync_active_tab_fields(ui);
+    });
+    preview_selected(state);
+}
+
+/// Shift-click: select the visible rows from the focused row (the anchor)
+/// to `index`, in display order. The anchor stays focused so the next
+/// Shift-click re-ranges from it.
+pub fn select_range(state: Signal<Ui>, index: i32) {
+    let ui = state.get();
+    let visible = visible_entries(&ui);
+    let target = visible.iter().position(|(i, _)| *i as i32 == index);
+    let anchor = visible.iter().position(|(i, _)| *i as i32 == ui.selected);
+    let (Some(target), Some(anchor)) = (target, anchor) else {
+        select_row(state, index);
+        return;
+    };
+    let (lo, hi) = if anchor <= target {
+        (anchor, target)
+    } else {
+        (target, anchor)
+    };
+    let paths: Vec<String> = visible[lo..=hi]
+        .iter()
+        .map(|(_, e)| e.path.clone())
+        .collect();
+    state.update(|ui| {
+        ui.selected_paths = paths;
+        ui.ctx_open = false;
+        sync_active_tab_fields(ui);
+    });
+}
+
+/// Ctrl/Cmd+A: every visible row of the current folder.
+pub fn select_all(state: Signal<Ui>) {
+    let ui = state.get();
+    if ui.folder_path.is_empty() || ui.inline_new || ui.inline_rename {
+        return;
+    }
+    let visible = visible_entries(&ui);
+    if visible.is_empty() {
+        return;
+    }
+    let paths: Vec<String> = visible.iter().map(|(_, e)| e.path.clone()).collect();
+    let focus = if ui.selected >= 0 {
+        ui.selected
+    } else {
+        visible[0].0 as i32
+    };
+    state.update(|ui| {
+        ui.selected_paths = paths;
+        ui.selected = focus;
+        ui.ctx_open = false;
+        sync_active_tab_fields(ui);
     });
 }
 

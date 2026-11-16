@@ -9,7 +9,7 @@ Native Shell（`gui-nsh`）读取本地 `gui-token`。构建 `gui-nsh` 需要 **
 ```sh
 cd gui-nsh
 cargo build --release
-./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+./target/release/tailfile-nsh --agent http://127.0.0.1:8645
 ```
 
 Windows（PowerShell）：
@@ -17,12 +17,12 @@ Windows（PowerShell）：
 ```powershell
 cd gui-nsh
 cargo build --release
-.\target\release\tailfile-nsh.exe -agent http://127.0.0.1:8645
+.\target\release\tailfile-nsh.exe --agent http://127.0.0.1:8645
 ```
 
-如果 agent 用了 `-state` 或 `-hostname`，这里加上同一个 `-state`。界面是中文。冲突对话框是「目标已有同名文件」「覆盖」「跳过」「对后续冲突都这样处理」。设置里的 auth key 输入框不回显已保存的 key。
+如果 agent 用了 `--state` 或 `--hostname`，这里加上同一个 `--state`。界面是中文。冲突对话框是「目标已有同名文件」「覆盖」「跳过」「对后续冲突都这样处理」。设置里的 auth key 输入框不回显已保存的 key。
 
-下文中的 `<hostname>` 是 `tailfile-` 加上本机主机名，除非你传了 `-hostname`。
+下文中的 `<hostname>` 是 `tailfile-` 加上本机主机名，除非你传了 `--hostname`。
 
 ## 状态文件
 
@@ -32,29 +32,29 @@ cargo build --release
 | macOS | `~/Library/Application Support/tailfile/<hostname>/` |
 | Windows | `%AppData%\tailfile\<hostname>\`（PowerShell：`"$env:APPDATA\tailfile\<hostname>"`） |
 
-- [ ] 不带 `-state` 启动后，`gui-token` 位于该目录，权限为 `0600`（Windows：文件的 DACL 授权给当前用户，不授权给其他用户）。
+- [ ] 不带 `--state` 启动后，`gui-token` 位于该目录，权限为 `0600`（Windows：文件的 DACL 授权给当前用户，不授权给其他用户）。
 - [ ] agent 日志打印 `gui-token` 的路径，而不是 token 本身。
 - [ ] 重启 agent 会更换 token。之前已打开的 GUI 会失败，直到刷新或重启并读取新文件。
 - [ ] 在保存之前 `ts-authkey` 不存在。保存后其权限为 `0600`（Windows：仅当前用户的 DACL），并且仍不会出现在日志和 `GET /v1/local/settings` 中。
 
 ## 默认共享
 
-- [ ] 不带 `-read` 和 `-write` 启动。agent 创建权限为 `0700` 的 `~/Tailfile`，并且只共享该目录。
+- [ ] 不带 `--read` 和 `--write` 启动。agent 创建权限为 `0700` 的 `~/Tailfile`，并且只共享该目录。
 - [ ] 粘贴到该文件夹可以成功。粘贴到该文件夹以外的路径会被拒绝。
-- [ ] `-demo` 不会创建 `~/Tailfile`。Demo 共享其临时测试数据目录。
+- [ ] `--demo` 不会创建 `~/Tailfile`。Demo 共享其临时测试数据目录。
 
 ## 系统 tailscale 模式
 
 需要一个已经以你的身份登录的 tailscaled。不需要 auth key。
 
 ```sh
-./tailfile-agent -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
+./tailfile-agent --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-.\tailfile-agent.exe -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
 ```
 
 - [ ] 日志显示 system 模式，而不是 tsnet。`GET /v1/local/settings`（bearer 取自 `gui-token`）显示 `"net": "system"`。
@@ -62,7 +62,7 @@ Windows（PowerShell）：
 - [ ] 同一 tailnet、同一 tailnet 用户下的第二台机器能列出此节点，并能读取 `~/Tailfile`。
 - [ ] 其他 tailnet 用户会被拒绝。
 - [ ] 在 Linux 上，如果日志提示 LocalAPI socket 不可读，执行 `sudo tailscale set --operator=$USER`，然后以该用户身份重新启动 agent。agent 本身仍不得用 sudo 运行。
-- [ ] 当 tailscaled 处于 Running 状态且有 Tailscale IP 时，`-net auto` 选择 system，否则选择 tsnet。日志会说明选了哪个以及原因。
+- [ ] 当 tailscaled 处于 Running 状态且有 Tailscale IP 时，`--net auto` 选择 system，否则选择 tsnet。日志会说明选了哪个以及原因。
 - [ ] 退出 tailscaled，或拿掉它的 IP，确认 agent 会重新绑定或退出，而不是在非 Tailscale 地址上监听。
 
 ## 按用户安装的服务
@@ -70,25 +70,36 @@ Windows（PowerShell）：
 使用你希望后台进程保留的同一组参数。示例：
 
 ```sh
-./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
-./tailfile-agent service start
+./tailfile-agent service install --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
 ./tailfile-agent service status
 ```
 
 Windows（PowerShell）：
 
 ```powershell
-.\tailfile-agent.exe service install -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
-.\tailfile-agent.exe service start
+.\tailfile-agent.exe service install --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
 .\tailfile-agent.exe service status
 ```
 
-- [ ] 安装时输出一行按用户安装成功的信息，并且不提示输入密码。
+- [ ] 安装时输出按用户安装成功和 `started tailfile-agent` 两行，并且不提示输入密码；`service status` 随即报告 running。
+- [ ] 启动失败时，install 以非零退出，提示修好后执行 `service start`；服务定义保留。
+- [ ] `service status`、`start`、`stop`、`uninstall` 不打印 "read root defaulting to ..."（那是 install 时才有意义的参数）。
 - [ ] 状态目录中的 `service.json` 含有 `"scope": "user"`、可执行文件路径和参数，不含 auth key。
-- [ ] 当你省略 `-hostname`、`-state`、`-net` 时，unit 或任务中也包含解析后的这些值；省略 `-read` 时，包含指向 `~/Tailfile` 的 `-read`。
+- [ ] 当你省略 `--hostname`、`--state`、`--net` 时，unit 或任务中也包含解析后的这些值；省略 `--read` 时，包含指向 `~/Tailfile` 的 `--read`。
 - [ ] 第二次 `service install` 会失败，并提示先卸载。
 - [ ] `./tailfile-agent service install --system` 会失败，且不会写入系统 unit、LaunchDaemon 或 Windows 服务。
 - [ ] 先 `service stop` 再 `service status`，报告已停止。`service uninstall` 删除服务定义，`service.json` 也被删除。卸载不会删除 `ts-authkey`。
+
+### 安装脚本（Tailscale SSH）
+
+```sh
+scripts/install-agent.sh --ssh <user>@<host>   # 远端 Linux/macOS
+scripts/install-agent.sh                       # 本机
+```
+
+- [ ] 首次安装：按目标 `uname -sm` 交叉编译，上传后 sha256 一致，服务 running，`~/Tailfile` 可读写。
+- [ ] 再次运行：提示 upgrading，只替换二进制并重启，unit 里的参数不变。
+- [ ] Linux 目标未开启 linger 时，脚本提示 `loginctl enable-linger`。
 
 ### Linux
 
@@ -99,7 +110,7 @@ Windows（PowerShell）：
 ### macOS
 
 - [ ] plist 为 `~/Library/LaunchAgents/tailfile-agent.plist`。`/Library/LaunchDaemons` 下没有 plist。
-- [ ] 仅安装不会启动进程。`service start` 会加载它（`launchctl list` 显示 `tailfile-agent`）。
+- [ ] `service install` 写入 plist 并立即加载（`launchctl list` 显示 `tailfile-agent`）。
 - [ ] `service stop` 会卸载它。下次登录时不会自动恢复，直到执行 `service start`。
 
 ### Windows
@@ -126,12 +137,16 @@ Windows（PowerShell）：
 
 使用一个可丢弃的 tsnet auth key。不要使用你无法吊销的 key。
 
-- [ ] Settings 显示当前网络模式（`system`、`tsnet` 或 `demo`；当请求的 `-net` 不同时也会显示它）。Native Shell 的文案是「网络模式」。
+- [ ] 设置分为「外观」「传输」「Agent 连接」「Tailscale 认证」四组，右下角是「应用」「保存」「取消」，左下角不显示「外观：…」之类的回显。改主题、粘贴方式、缓存目录或地址后点「取消」（或按 Esc、点遮罩、点 ×）不生效；点「应用」生效且对话框不关；点「保存」生效并关闭。没有改动时「应用」是灰的。当前选项高亮显示（包括「跟随系统」「推送」），所有按钮鼠标悬停时变色。
+- [ ] 首次启动「粘贴方式」是「推送」。改成「拉取」并保存，重启 GUI 后仍是「拉取」，粘贴时状态栏写「已开始拉取」。
+- [ ] 「缓存目录」显示 agent 当前目录，下方写出默认目录。「打开」在访达/资源管理器/文件管理器中打开它。改成另一个绝对路径并应用后，该目录被创建，`<state>/cache-dir` 记下它，重启 agent 后仍然生效；清空并应用后恢复默认，`cache-dir` 被删除。相对路径被拒绝并在对话框里提示。
+- [ ] 工具栏没有「更多」，也没有「导入」「清空剪贴板」「缓存」「显示缓存」按钮。从系统拖文件进列表可以导入。对远程文件右键「在访达中显示」（或选中按 Enter）会下载到缓存目录并在文件管理器中选中它；对文件夹右键仍是「打开」。
+- [ ] Settings 显示当前网络模式（`system`、`tsnet` 或 `demo`；当请求的 `--net` 不同时也会显示它）。Native Shell 的文案是「网络模式」。
 - [ ] 保存之前，界面显示未配置 key。`GET /v1/local/settings` 返回 `"authKeyConfigured": false`，且没有 key 字段。
-- [ ] 粘贴 key 并保存。GUI 提示需要重启。响应包含 `configured: true` 和 `restartRequired: true`，且不含 key。磁盘上的 `ts-authkey` 与你粘贴的 key 一致。agent 日志中没有该 key。
-- [ ] 使用 `-net tsnet` 且不设置 `TS_AUTHKEY` 重启。日志说明 key 来自文件，且不打印它。节点加入 tailnet。
+- [ ] 粘贴 key 并点「应用」或「保存」。GUI 提示需要重启。响应包含 `configured: true` 和 `restartRequired: true`，且不含 key。磁盘上的 `ts-authkey` 与你粘贴的 key 一致。agent 日志中没有该 key。
+- [ ] 使用 `--net tsnet` 且不设置 `TS_AUTHKEY` 重启。日志说明 key 来自文件，且不打印它。节点加入 tailnet。
 - [ ] export 一个不同的 `TS_AUTHKEY` 并重启（Windows PowerShell：`$env:TS_AUTHKEY = '...'`）。日志显示来源为 `TS_AUTHKEY`。文件不变。节点使用环境变量中的值。
-- [ ] 在 Settings 中清除，然后在不设置 `TS_AUTHKEY`、不带 `-authkey` 的情况下重启。文件已删除。tsnet 打印登录 URL，而不是使用旧 key。
+- [ ] 在 Settings 中勾选「应用时删除已保存的 key」并保存，然后在不设置 `TS_AUTHKEY`、不带 `--authkey` 的情况下重启。文件已删除。tsnet 打印登录 URL，而不是使用旧 key。
 - [ ] 在 tailnet 端口（8644）上 `GET` 设置 URL。返回的不是设置文档。
 
 

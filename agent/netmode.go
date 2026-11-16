@@ -53,10 +53,10 @@ func chooseNetMode(ctx context.Context, mode string, probe systemProbe) (netChoi
 	}
 	switch mode {
 	case netTsnet:
-		return netChoice{Mode: netTsnet, Why: "requested with -net tsnet"}, nil
+		return netChoice{Mode: netTsnet, Why: "requested with --net tsnet"}, nil
 	case netAuto, netSystem:
 	default:
-		return netChoice{}, fmt.Errorf("-net must be auto, system, or tsnet, not %q", mode)
+		return netChoice{}, fmt.Errorf("--net must be auto, system, or tsnet, not %q", mode)
 	}
 	st, lc, err := probe(ctx)
 	if err != nil {
@@ -88,7 +88,7 @@ func chooseNetMode(ctx context.Context, mode string, probe systemProbe) (netChoi
 	if mode == netAuto {
 		why = "auto: " + why
 	} else {
-		why = "requested with -net system; " + why
+		why = "requested with --net system; " + why
 	}
 	return netChoice{Mode: netSystem, Why: why, Client: lc}, nil
 }

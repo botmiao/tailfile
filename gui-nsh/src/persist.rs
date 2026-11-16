@@ -77,6 +77,9 @@ pub struct UiPersist {
     /// Sidebar folded to the host-icon rail.
     #[serde(default)]
     pub sidebar_collapsed: bool,
+    /// How paste copies between nodes: "push" (default) or "pull".
+    #[serde(default)]
+    pub transfer_mode: String,
 }
 
 fn default_true() -> bool {
@@ -154,10 +157,12 @@ mod tests {
             active_tab: 0,
             preview_on: false,
             sidebar_collapsed: true,
+            transfer_mode: "pull".into(),
         };
         save(dir.to_str().unwrap(), &data);
         let loaded = load(dir.to_str().unwrap());
         assert_eq!(loaded.theme, ThemePref::Dark);
+        assert_eq!(loaded.transfer_mode, "pull");
         assert_eq!(loaded.tabs.len(), 1);
         assert_eq!(loaded.tabs[0].filter, "png");
         assert!(!loaded.preview_on);

@@ -30,7 +30,7 @@ Native Shell 客户端是独立的 Rust crate（`gui-nsh/`）。它要求 **rust
 ```sh
 cd agent
 go build -o tailfile-agent ./cmd/tailfile-agent
-./tailfile-agent -demo
+./tailfile-agent --demo
 ```
 
 Windows（PowerShell）：
@@ -38,12 +38,12 @@ Windows（PowerShell）：
 ```powershell
 cd agent
 go build -o tailfile-agent.exe ./cmd/tailfile-agent
-.\tailfile-agent.exe -demo
+.\tailfile-agent.exe --demo
 ```
 
 **Windows 注意：** 用 `-o` 指定输出文件名时，Go 不会自动加 `.exe`。请在 `-o` 中写上 `.exe`。
 
-`-demo` 会在进程内启动三个节点：`alpha` 和 `beta`（可写）以及 `gamma`（只读），所有者为 `ada@example.com`。不会加入任何 tailnet。API 位于 `http://127.0.0.1:8645`。`-demo` 会忽略 `-net`。
+`--demo` 会在进程内启动三个节点：`alpha` 和 `beta`（可写）以及 `gamma`（只读），所有者为 `ada@example.com`。不会加入任何 tailnet。API 位于 `http://127.0.0.1:8645`。`--demo` 会忽略 `--net`。
 
 agent 在前台运行。接下来在第二个终端（从仓库根目录）启动 `gui-nsh`。
 
@@ -52,7 +52,7 @@ Linux / macOS：
 ```sh
 cd gui-nsh
 cargo build --release
-./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+./target/release/tailfile-nsh --agent http://127.0.0.1:8645
 ```
 
 Windows（PowerShell）：
@@ -60,10 +60,10 @@ Windows（PowerShell）：
 ```powershell
 cd gui-nsh
 cargo build --release
-.\target\release\tailfile-nsh.exe -agent http://127.0.0.1:8645
+.\target\release\tailfile-nsh.exe --agent http://127.0.0.1:8645
 ```
 
-`cargo run --release -- -agent http://127.0.0.1:8645` 等价。如果 agent 使用了非默认状态目录，GUI 也要通过 `-state` 或 `-token-file` 指向同一目录；也可设置环境变量 `TAILFILE_AGENT`、`TAILFILE_STATE`、`TAILFILE_TOKEN_FILE`。
+`cargo run --release -- --agent http://127.0.0.1:8645` 等价。如果 agent 使用了非默认状态目录，GUI 也要通过 `--state` 或 `--token-file` 指向同一目录；也可设置环境变量 `TAILFILE_AGENT`、`TAILFILE_STATE`、`TAILFILE_TOKEN_FILE`。
 
 Linux 上先装编译依赖（Ubuntu 24.04 的 GTK 4.14 即可）：
 
@@ -75,9 +75,11 @@ sudo apt install pkg-config libgtk-4-dev clang
 
 ## 真实 tailnet
 
-在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `-write` 列表时节点为只读。没有 `-read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`；Windows 上是 `%USERPROFILE%\Tailfile`，即 PowerShell 中的 `$HOME\Tailfile`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
+在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `--write` 列表时节点为只读。没有 `--read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`；Windows 上是 `%USERPROFILE%\Tailfile`，即 PowerShell 中的 `$HOME\Tailfile`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
 
-`-net` 决定 agent 如何加入 tailnet：
+所有参数（agent 和 gui-nsh）统一写成双横线形式，如 `--read`、`--net`，也可以写成 `--read=PATH`。旧的单横线写法（`-read`、`-net`）仍然可用，因此已安装服务中的旧命令不受影响；`--help` 和新安装的服务只使用双横线。
+
+`--net` 决定 agent 如何加入 tailnet：
 
 | 取值 | 行为 |
 | --- | --- |
@@ -87,32 +89,32 @@ sudo apt install pkg-config libgtk-4-dev clang
 
 ```sh
 # Prefer the machine's own tailscaled. No auth key.
-./tailfile-agent -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
+./tailfile-agent --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
 
 # Force an embedded node.
 export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the command line if you can avoid it
-./tailfile-agent -net tsnet \
-  -hostname my-laptop \
-  -read "$HOME/Tailfile" \
-  -write "$HOME/Tailfile"
+./tailfile-agent --net tsnet \
+  --hostname my-laptop \
+  --read "$HOME/Tailfile" \
+  --write "$HOME/Tailfile"
 ```
 
 Windows（PowerShell）：
 
 ```powershell
 # Prefer the machine's own tailscaled. No auth key.
-.\tailfile-agent.exe -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
 
 # Force an embedded node.
 $env:TS_AUTHKEY = 'tskey-auth-...'   # never commit this
-.\tailfile-agent.exe -net tsnet -hostname my-laptop -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe --net tsnet --hostname my-laptop --read "$HOME\Tailfile" --write "$HOME\Tailfile"
 ```
 
-如果给 agent 传了 `-hostname` 或 `-state`，状态目录（以及其中的 `gui-token`）就不在默认位置，启动 GUI 时需要用 `-state`（或 `-token-file`）指向同一个目录。
+如果给 agent 传了 `--hostname` 或 `--state`，状态目录（以及其中的 `gui-token`）就不在默认位置，启动 GUI 时需要用 `--state`（或 `--token-file`）指向同一个目录。
 
-`-authkey` 参数仍然可用，但会打印警告。建议使用 `TS_AUTHKEY` 或 Settings 界面，这样 key 不会出现在 shell 历史和服务命令中。进程启动时的读取顺序是 `TS_AUTHKEY`，然后是 `-authkey`，最后是文件 `<state>/ts-authkey`。key 为空时，tsnet 会打印一个交互式登录 URL，用浏览器打开即可。保存或清除 key 不会重启已经运行的节点，需要重启 agent。本地 API 只返回是否配置了 key，从不返回 key 本身，key 也从不写入日志。
+`--authkey` 参数仍然可用，但会打印警告。建议使用 `TS_AUTHKEY` 或 Settings 界面，这样 key 不会出现在 shell 历史和服务命令中。进程启动时的读取顺序是 `TS_AUTHKEY`，然后是 `--authkey`，最后是文件 `<state>/ts-authkey`。key 为空时，tsnet 会打印一个交互式登录 URL，用浏览器打开即可。保存或清除 key 不会重启已经运行的节点，需要重启 agent。本地 API 只返回是否配置了 key，从不返回 key 本身，key 也从不写入日志。
 
-状态保存在用户配置目录下的 `tailfile/<hostname>`（权限 `0700`），或 `-state` 指定的位置。不要提交该目录。
+状态保存在用户配置目录下的 `tailfile/<hostname>`（权限 `0700`），或 `--state` 指定的位置。不要提交该目录。
 
 | 操作系统 | 状态目录 |
 | --- | --- |
@@ -122,15 +124,15 @@ $env:TS_AUTHKEY = 'tskey-auth-...'   # never commit this
 
 Windows 上 `%AppData%` 即 `os.UserConfigDir()` 返回的 Roaming 目录，通常是 `C:\Users\<用户名>\AppData\Roaming`，PowerShell 中为 `$env:APPDATA`。例如：`Get-ChildItem "$env:APPDATA\tailfile"`。
 
-`<hostname>` 默认是 `tailfile-` 加上本机主机名。`gui-token` 在每次启动时重写（权限 `0600`；Windows 上 DACL 仅授权给当前用户）。`ts-authkey` 是保存的 auth key，权限相同，重启后保留。`jobs.json`、`transfers.json` 和 `service.json` 的权限也是 `0600`。System 模式不会创建 tailnet 节点密钥；`-hostname` 只用于命名状态目录。其他节点看到的名称是 tailscaled 原有的名称。
+`<hostname>` 默认是 `tailfile-` 加上本机主机名。`gui-token` 在每次启动时重写（权限 `0600`；Windows 上 DACL 仅授权给当前用户）。`ts-authkey` 是保存的 auth key，权限相同，重启后保留。`jobs.json`、`transfers.json` 和 `service.json` 的权限也是 `0600`。System 模式不会创建 tailnet 节点密钥；`--hostname` 只用于命名状态目录。其他节点看到的名称是 tailscaled 原有的名称。
 
-System 模式只在节点的 Tailscale IPv4 和 IPv6 地址（`100.64.0.0/10` 和 `fd7a:115c:a1e0::/48`）上监听 `-port`（8644），从不绑定 `0.0.0.0`。如果这些地址变化或 tailscaled 重启，agent 会丢弃旧 socket 并绑定新地址。对其他 agent 的出站调用是普通的系统拨号，目标为 `100.x` / `fd7a::`，不走用户态网络栈。主机防火墙必须允许 Tailscale 接口（Linux 上为 `tailscale0`）的入站 TCP 8644。tsnet 模式在进程内部监听，因此主机防火墙看不到该端口。
+System 模式只在节点的 Tailscale IPv4 和 IPv6 地址（`100.64.0.0/10` 和 `fd7a:115c:a1e0::/48`）上监听 `--port`（8644），从不绑定 `0.0.0.0`。如果这些地址变化或 tailscaled 重启，agent 会丢弃旧 socket 并绑定新地址。对其他 agent 的出站调用是普通的系统拨号，目标为 `100.x` / `fd7a::`，不走用户态网络栈。主机防火墙必须允许 Tailscale 接口（Linux 上为 `tailscale0`）的入站 TCP 8644。tsnet 模式在进程内部监听，因此主机防火墙看不到该端口。
 
 在 Linux 上，LocalAPI socket 通常只有 root 可访问。如果 system 模式（或 auto 模式的回退日志）提示无法读取 tailscaled，执行 `sudo tailscale set --operator=$USER`，然后以该用户身份重新启动 agent。在 macOS 上，auto 和 system 会同时尝试开源版 `tailscaled` 的 unix socket 以及 App Store / 独立版应用。
 
 无论哪种模式，agent 还会在 localhost 的 `127.0.0.1:8645` 上监听。本地监听器拒绝 `127.0.0.1`、`localhost` 或 `::1` 以外的任何地址（`0.0.0.0:8645` 和 `:8645` 都无法启动）。不要对外公开 8645 端口。
 
-每个 tailnet 请求都会通过 LocalAPI `WhoIs` 检查，无论该 LocalAPI 属于系统 tailscaled 还是内嵌的 tsnet 节点。在 agent 知道自己的 tailnet 用户之前，它会拒绝 tailnet 调用。之后只允许该用户访问，除非你通过 `-owner` 或 `TAILFILE_OWNER` 指定其他登录名。
+每个 tailnet 请求都会通过 LocalAPI `WhoIs` 检查，无论该 LocalAPI 属于系统 tailscaled 还是内嵌的 tsnet 节点。在 agent 知道自己的 tailnet 用户之前，它会拒绝 tailnet 调用。之后只允许该用户访问，除非你通过 `--owner` 或 `TAILFILE_OWNER` 指定其他登录名。
 
 Tailscale grants 可以收窄（以及共享）访问权限。如果 WhoIs 的 `CapMap` 包含 `iori.dev/cap/tailfile`，则强制执行该 grant，不再要求同一用户检查。每个值都是 JSON：
 
@@ -138,11 +140,11 @@ Tailscale grants 可以收窄（以及共享）访问权限。如果 WhoIs 的 `
 {"read": ["/home/ada/Tailfile"], "write": ["/home/ada/Tailfile/inbox"]}
 ```
 
-grant 中的路径会与本节点的 `-read` 和 `-write` 列表取交集。列表之外的路径会被丢弃，因此 grant 无法扩大节点的共享范围。比已配置根目录更宽的 grant 会保留已配置的根目录。没有该 capability 时回退到同一用户规则。capability 存在但为空，或不是合法 JSON 时，一律拒绝（fail closed）。
+grant 中的路径会与本节点的 `--read` 和 `--write` 列表取交集。列表之外的路径会被丢弃，因此 grant 无法扩大节点的共享范围。比已配置根目录更宽的 grant 会保留已配置的根目录。没有该 capability 时回退到同一用户规则。capability 存在但为空，或不是合法 JSON 时，一律拒绝（fail closed）。
 
-localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。`gui-nsh` 读取该文件（或通过 `-token-file` / `-state` 指定），不设置 `Origin`（空 Origin 加上 bearer 是 agent 允许的原生客户端路径），请求走本机 HTTP。请求必须带 `Authorization: Bearer …`，`Host` 必须是回环地址。
+localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。`gui-nsh` 读取该文件（或通过 `--token-file` / `--state` 指定），不设置 `Origin`（空 Origin 加上 bearer 是 agent 允许的原生客户端路径），请求走本机 HTTP。请求必须带 `Authorization: Bearer …`，`Host` 必须是回环地址。
 
-Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式（`system`、`tsnet` 或 `demo`）、请求的 `-net` 值以及 `authKeyConfigured`。`PUT /v1/local/settings/authkey` 携带 `{"authKey":"..."}` 会写入 `<state>/ts-authkey`。`DELETE /v1/local/settings/authkey` 会删除它。这两个写操作的响应都会设置 `restartRequired`，且不回显 key。tailnet 监听器不提供这些路由。
+Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式（`system`、`tsnet` 或 `demo`）、请求的 `--net` 值以及 `authKeyConfigured`。`PUT /v1/local/settings/authkey` 携带 `{"authKey":"..."}` 会写入 `<state>/ts-authkey`。`DELETE /v1/local/settings/authkey` 会删除它。这两个写操作的响应都会设置 `restartRequired`，且不回显 key。tailnet 监听器不提供这些路由。
 
 `/v1/local/import` 只接受位于读取根目录内的系统路径（包括解析符号链接之后）。根目录以外的路径会被拒绝。
 
@@ -183,18 +185,27 @@ LaunchAgent 为 `~/Library/LaunchAgents/tailfile-agent.plist`，带 `RunAtLoad`�
 注册一个名为 `TailfileAgent` 的 Task Scheduler 登录任务（`schtasks /Create /XML`）：`RunLevel` 为 LeastPrivilege，交互式登录触发器，无执行时间限制。
 
 ```sh
-./tailfile-agent service install -net system -read "$HOME/Tailfile" -write "$HOME/Tailfile"
+./tailfile-agent service install --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
 ./tailfile-agent service status
-./tailfile-agent service start
 ```
+
+`service install` 会注册并立即启动服务；启动失败时保留服务定义并以非零退出，修好原因后执行 `service start`。
 
 Windows（PowerShell，不需要以管理员身份运行）：
 
 ```powershell
-.\tailfile-agent.exe service install -net system -read "$HOME\Tailfile" -write "$HOME\Tailfile"
+.\tailfile-agent.exe service install --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
 .\tailfile-agent.exe service status
-.\tailfile-agent.exe service start
 ```
+
+### 安装脚本（本机或经 Tailscale SSH 装到另一台机器）
+
+```sh
+scripts/install-agent.sh --ssh <user>@<host>   # 远端 Linux/macOS，需开启 Tailscale SSH
+scripts/install-agent.sh                       # 本机
+```
+
+脚本按目标的 `uname -sm` 从本仓库交叉编译（需要 Go；或用 `--binary` 指定现成的二进制），经 `tailscale ssh` 上传到 `~/.local/bin/tailfile-agent` 并校验 sha256，然后以 `--net system --read ~/Tailfile --write ~/Tailfile` 安装并启动服务。可用 `--net`、`--read`、`--write`、`--read-only`、`--dest` 覆盖。已安装时只替换二进制并重启，原有参数不变。Linux 目标未开启 linger 时会提示。
 
 ## 各操作系统的构建
 
@@ -210,7 +221,7 @@ Windows（PowerShell，不需要以管理员身份运行）：
 
   ```sh
   cd gui-nsh && cargo build --release
-  ./target/release/tailfile-nsh -agent http://127.0.0.1:8645
+  ./target/release/tailfile-nsh --agent http://127.0.0.1:8645
   ```
 
 ### Ubuntu / Debian
@@ -229,12 +240,16 @@ cd gui-nsh && cargo build --release
 
 ## 本地文件缓存与拖入导入
 
-`gui-nsh` 支持把远程文件下载到本地缓存（`POST /v1/local/cache`），然后点击「在文件夹中显示」（`POST /v1/local/reveal`：macOS 上用 Finder，Windows 上用资源管理器，Linux 上对父目录执行 `xdg-open`）。缓存位于 `os.UserCacheDir()/tailfile`（权限 `0700`）。同时支持将系统本地文件直接拖入文件列表（`on_file_drop`）或通过「更多 -> 导入本地路径…」导入到当前远程目录。
+`gui-nsh` 里对文件右键「在访达中显示」（Windows：资源管理器，Linux：文件管理器），或选中后按 Enter，会先把远程文件下载到本地缓存（`POST /v1/local/cache`），再在文件管理器中显示（`POST /v1/local/reveal`：macOS 上 `open -R`，Windows 上 `explorer /select,`，Linux 上对父目录执行 `xdg-open`）。运行 agent 的本机上的文件不复制，直接显示原文件。
+
+缓存目录默认是 `os.UserCacheDir()/tailfile`（权限 `0700`），可以在 设置 → 传输 → 缓存目录 中修改。`PUT /v1/local/settings/cachedir` 携带 `{"cacheDir":"/abs/path"}` 切换目录（必须是绝对路径，不存在则创建；空字符串恢复默认），选择保存在 `<state>/cache-dir`，重启后仍然有效；自选目录保留它原有的权限。`GET /v1/local/settings` 返回 `cacheDir` 与 `cacheDirDefault`。`POST /v1/local/cache/open` 在文件管理器中打开当前缓存目录（不接受路径参数）。
+
+把系统本地文件直接拖进文件列表（`on_file_drop`）即可导入到当前远程目录。
 
 ## sing-box（TUN）与 Tailscale
 
 - `100.64.0.0/10` 与 `fd7a:115c:a1e0::/48` 网段需设为 **direct**（直连）。
-- `-net tsnet` 时请为 `tailfile-agent` 设置进程直连。
+- `--net tsnet` 时请为 `tailfile-agent` 设置进程直连。
 
 ## 测试与形式化验证
 

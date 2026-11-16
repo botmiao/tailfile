@@ -14,11 +14,11 @@ pub struct InstallGuide {
 pub fn for_unreachable(node_label: &str) -> InstallGuide {
     InstallGuide {
         title: format!("无法连接 {node_label} 上的 Tailfile daemon"),
-        summary: "本客户端不会自动登录或修改远程机器。请在目标主机上自行安装并运行 agent，然后点刷新。".into(),
-        linux: "curl -fsSL https://raw.githubusercontent.com/botmiao/tailfile/main/scripts/install-agent.sh | sh\n# 或：从发布页下载 binary 后\n./tailfile-agent -hostname <name> -state ~/.config/tailfile/<name>".into(),
-        windows: "在 PowerShell（管理员可选）下载发布包中的 tailfile-agent.exe，然后：\n.\\tailfile-agent.exe -hostname <name> -state $env:APPDATA\\tailfile\\<name>\n# 可选：注册用户级计划任务见文档 service 章节".into(),
-        macos: "从发布页下载 darwin binary：\nchmod +x ./tailfile-agent\n./tailfile-agent -hostname <name> -state ~/Library/Application\\ Support/tailfile/<name>".into(),
-        note: "未来可能提供 Tailscale SSH 一键安装；当前 MVP 仅生成可复制命令。确保目标主机已加入同一 tailnet，并配置读写白名单根目录。".into(),
+        summary: "本客户端不会自动登录或修改远程机器。请用下面的命令在目标主机上安装并启动 agent，然后点刷新。".into(),
+        linux: "# 在 tailfile 仓库目录中运行，经 Tailscale SSH 安装到目标主机（需要 Go）：\nscripts/install-agent.sh --ssh <user>@<host>\n# 或在目标主机本机运行：\nscripts/install-agent.sh".into(),
+        windows: "下载或构建 tailfile-agent.exe，然后在 PowerShell（无需管理员）中：\n.\\tailfile-agent.exe service install --net system --read \"$HOME\\Tailfile\" --write \"$HOME\\Tailfile\"\n# install 会注册用户级登录任务并立即启动".into(),
+        macos: "# 在 tailfile 仓库目录中运行，经 Tailscale SSH 安装到目标 Mac（需要 Go）：\nscripts/install-agent.sh --ssh <user>@<host>\n# 或在目标 Mac 本机运行：\nscripts/install-agent.sh".into(),
+        note: "Tailscale SSH 一键安装由仓库里的 scripts/install-agent.sh 完成（目标需开启 Tailscale SSH）；已安装时会只替换二进制并重启。确保目标主机已加入同一 tailnet，默认读写根目录为 ~/Tailfile。".into(),
     }
 }
 
@@ -40,5 +40,18 @@ mod tests {
         assert!(g.summary.contains("不会自动"));
         assert!(g.note.contains("Tailscale SSH"));
         assert!(!commands_clipboard(&g, "linux").is_empty());
+    }
+
+    #[test]
+    fn guide_uses_the_shipped_install_script() {
+        let g = for_unreachable("vps");
+        let script = concat!(env!("CARGO_MANIFEST_DIR"), "/../scripts/install-agent.sh");
+        assert!(std::path::Path::new(script).is_file(), "missing {script}");
+        for os in ["linux", "macos"] {
+            let cmd = commands_clipboard(&g, os);
+            assert!(cmd.contains("scripts/install-agent.sh --ssh"), "{cmd}");
+            assert!(!cmd.contains("curl"), "{cmd}");
+        }
+        assert!(commands_clipboard(&g, "windows").contains("service install"));
     }
 }

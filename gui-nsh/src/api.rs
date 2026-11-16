@@ -69,6 +69,8 @@ pub struct Settings {
     pub net: String,
     pub net_requested: String,
     pub auth_key_configured: bool,
+    pub cache_dir: String,
+    pub cache_dir_default: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,6 +278,23 @@ impl Client {
             parse_json::<AuthBody>(&self.send("DELETE", "/v1/local/settings/authkey", None)?)?
                 .into(),
         )
+    }
+
+    /// Sets the agent's drag-out cache directory; "" restores the default.
+    pub fn set_cache_dir(&self, dir: &str) -> Result<Settings, String> {
+        let body = serde_json::json!({ "cacheDir": dir });
+        Ok(parse_json::<SettingsBody>(&self.send(
+            "PUT",
+            "/v1/local/settings/cachedir",
+            Some(&body),
+        )?)?
+        .into())
+    }
+
+    /// Opens the cache directory in the system file manager.
+    pub fn open_cache_dir(&self) -> Result<(), String> {
+        self.send("POST", "/v1/local/cache/open", None)?;
+        Ok(())
     }
 
     fn get(&self, path: &str) -> Result<Vec<u8>, String> {
@@ -636,6 +655,10 @@ struct SettingsBody {
     net_requested: String,
     #[serde(default, rename = "authKeyConfigured")]
     auth_key_configured: bool,
+    #[serde(default, rename = "cacheDir")]
+    cache_dir: String,
+    #[serde(default, rename = "cacheDirDefault")]
+    cache_dir_default: String,
 }
 
 impl From<SettingsBody> for Settings {
@@ -644,6 +667,8 @@ impl From<SettingsBody> for Settings {
             net: body.net,
             net_requested: body.net_requested,
             auth_key_configured: body.auth_key_configured,
+            cache_dir: body.cache_dir,
+            cache_dir_default: body.cache_dir_default,
         }
     }
 }

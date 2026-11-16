@@ -109,11 +109,25 @@ func resolveExisting(path string) (string, error) {
 
 func withinAny(path string, roots []string) bool {
 	for _, root := range roots {
-		if within(root, path) {
-			return true
+		for _, form := range rootForms(root) {
+			if within(form, path) {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// rootForms returns the root as configured and, when it differs, with its
+// symlinks resolved. Request paths are compared after EvalSymlinks, so a
+// root under a symlink (macOS /tmp -> /private/tmp, a home directory on
+// another mount) has to be compared in its resolved form as well.
+func rootForms(root string) []string {
+	root = filepath.Clean(root)
+	if resolved, err := resolveExisting(root); err == nil && resolved != root {
+		return []string{root, resolved}
+	}
+	return []string{root}
 }
 
 func within(root, path string) bool {

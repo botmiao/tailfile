@@ -1,4 +1,4 @@
-//! Command-line and environment configuration (`-agent`, `-token-file`, and `-state`).
+//! Command-line and environment configuration (`--agent`, `--token-file`, and `--state`; the single-dash spellings also parse).
 
 use std::sync::OnceLock;
 
@@ -87,11 +87,11 @@ fn split_flag(arg: &str) -> Result<(String, Option<String>), String> {
 
 pub fn usage() -> String {
     "\
-用法: tailfile-nsh [-agent URL] [-token-file PATH] [-state DIR]
+用法: tailfile-nsh [--agent URL] [--token-file PATH] [--state DIR]
 
-  -agent       本机 agent 地址（默认 http://127.0.0.1:8645）
-  -token-file  gui-token 文件（默认 <state>/gui-token）
-  -state       agent 状态目录（默认与 agent 相同的用户配置目录）
+  --agent       本机 agent 地址（默认 http://127.0.0.1:8645）
+  --token-file  gui-token 文件（默认 <state>/gui-token）
+  --state       agent 状态目录（默认与 agent 相同的用户配置目录）
 
 也可以用环境变量 TAILFILE_AGENT、TAILFILE_TOKEN_FILE、TAILFILE_STATE。
 token 只从文件读取，不会打印。"
@@ -131,7 +131,7 @@ mod tests {
     #[test]
     fn help_is_an_error_message_without_a_token() {
         let err = Launch::parse(["--help".into()]).unwrap_err();
-        assert!(err.contains("-agent"));
+        assert!(err.contains("--agent"));
         assert!(!err.contains("tskey"));
     }
 }

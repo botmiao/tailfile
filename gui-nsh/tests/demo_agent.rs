@@ -1,4 +1,4 @@
-//! Drives the HTTP client against `tailfile-agent -demo`.
+//! Drives the HTTP client against `tailfile-agent --demo`.
 //! Skips when Go is not on PATH. The window is not opened.
 
 use std::io::{Read, Write};
@@ -48,10 +48,10 @@ impl Demo {
         let log = std::fs::File::create(state.join("agent.log")).ok()?;
         let mut child = Command::new(&bin)
             .args([
-                "-demo",
-                "-state",
+                "--demo",
+                "--state",
                 state.to_str()?,
-                "-listen",
+                "--listen",
                 &format!("127.0.0.1:{port}"),
             ])
             .stdin(Stdio::null())

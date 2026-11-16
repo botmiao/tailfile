@@ -74,9 +74,9 @@ func runTailnet(ctx context.Context, cfg Config) error {
 
 	log.Printf("tailfile %s GUI on http://%s (tailnet port %d, mode %s)", cfg.Hostname, cfg.LocalAddr, cfg.Port, backend.Mode())
 	log.Printf("state: %s", cfg.StateDir)
-	log.Printf("drag-out cache: %s", srv.cacheDir)
+	log.Printf("drag-out cache: %s", srv.currentCacheDir())
 	if len(cfg.WriteRoots) == 0 {
-		log.Printf("writes are disabled — pass -write to allow paste onto this node")
+		log.Printf("writes are disabled — pass --write to allow paste onto this node")
 	}
 
 	localErr := serveLocal(runCtx, cfg.LocalAddr, srv.LocalHandler())
@@ -101,10 +101,10 @@ func prepareNode(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	srv.cacheDir = cacheDir
 	if err := srv.attachState(cfg.StateDir); err != nil {
 		return nil, err
 	}
+	srv.initCacheDir(cacheDir)
 	token, err := writeGUIToken(cfg.StateDir)
 	if err != nil {
 		return nil, err
@@ -168,11 +168,11 @@ func startTsnet(cfg Config) (*tsnetBackend, error) {
 	// The key is handed to tsnet and never written to the log.
 	switch source {
 	case "":
-		log.Printf("tailfile: no auth key (TS_AUTHKEY, -authkey, or %s) — tsnet will print an interactive login URL on first run", filepath.Join(cfg.StateDir, AuthKeyFile))
+		log.Printf("tailfile: no auth key (TS_AUTHKEY, --authkey, or %s) — tsnet will print an interactive login URL on first run", filepath.Join(cfg.StateDir, AuthKeyFile))
 	case "TS_AUTHKEY":
 		log.Printf("tailfile: using auth key from TS_AUTHKEY (value not logged)")
-	case "-authkey":
-		log.Printf("tailfile: using auth key from -authkey (value not logged)")
+	case "--authkey":
+		log.Printf("tailfile: using auth key from --authkey (value not logged)")
 	default:
 		log.Printf("tailfile: using auth key from %s (value not logged)", filepath.Join(cfg.StateDir, AuthKeyFile))
 	}

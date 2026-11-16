@@ -19,6 +19,7 @@ use nsh_core::{
 use tailfile_nsh::{
     api::{Entry, NodeInfo},
     model::{self, TabState, TreeRow, Ui},
+    persist::ThemePref,
     token, ui,
 };
 
@@ -764,4 +765,78 @@ fn check_active_tab_state_sync() {
         violations.len(),
         violations.join("\n\n")
     );
+}
+
+// ============================================================================
+// Settings dialog: edits are a draft until Apply/Save; Cancel drops it.
+// ============================================================================
+
+#[test]
+fn check_settings_draft_apply_cancel() {
+    let (start_theme, after_cancel, after_apply, after_save) = with_signal_context(|state| {
+        let mut ui = Ui::new();
+        seed_model_ui(&mut ui);
+        ui.addr = "http://127.0.0.1:8645".into();
+        ui.cache_dir = "/tmp/tf-cache".into();
+        ui.cache_dir_default = "/tmp/tf-cache".into();
+        state.set(ui);
+        assert_eq!(state.get().mode, "push", "paste mode defaults to push");
+        let start_theme = state.get().theme.clone();
+        let other = if start_theme == ThemePref::Dark {
+            ThemePref::Light
+        } else {
+            ThemePref::Dark
+        };
+
+        // Cancel drops every draft field and changes nothing in effect.
+        model::open_settings(state);
+        model::set_draft_theme(state, other);
+        model::set_draft_mode(state, "pull");
+        model::set_draft_addr(state, "http://127.0.0.1:9999");
+        model::set_draft_cache_dir(state, "/tmp/elsewhere");
+        model::set_draft_auth(state, "tskey-auth-draft");
+        assert!(model::settings_dirty(&state.get()));
+        model::cancel_settings(state);
+        let after_cancel = state.get();
+
+        // Cache directory spellings that mean "what is in effect" are clean.
+        model::open_settings(state);
+        assert!(!model::settings_dirty(&state.get()), "fresh draft must be clean");
+        model::set_draft_cache_dir(state, "");
+        assert!(!model::cache_dir_dirty(&state.get()), "empty means the default");
+        model::set_draft_cache_dir(state, " /tmp/tf-cache/ ");
+        assert!(!model::cache_dir_dirty(&state.get()), "trailing slash is the same dir");
+        model::set_draft_cache_dir(state, "/tmp/tf-cache");
+        model::set_draft_mode(state, "sideways");
+        assert_eq!(state.get().draft_mode, "push", "unknown modes are ignored");
+
+        // Apply commits the address and paste mode and keeps the dialog open.
+        model::set_draft_addr(state, " http://127.0.0.1:9999/ ");
+        model::set_draft_mode(state, "pull");
+        assert!(model::apply_settings(state));
+        let after_apply = state.get();
+
+        // An empty address is rejected and Save keeps the dialog open.
+        model::set_draft_addr(state, "   ");
+        model::save_settings(state);
+        assert!(state.get().settings_open, "invalid draft must not close the dialog");
+        model::set_draft_addr(state, "http://127.0.0.1:9999");
+        model::save_settings(state);
+        (start_theme, after_cancel, after_apply, state.get())
+    });
+
+    assert!(!after_cancel.settings_open);
+    assert_eq!(after_cancel.addr, "http://127.0.0.1:8645");
+    assert_eq!(after_cancel.theme, start_theme, "cancel must not change the theme");
+    assert_eq!(after_cancel.mode, "push", "cancel must not change the paste mode");
+    assert_eq!(after_cancel.cache_dir, "/tmp/tf-cache", "cancel must not change the cache dir");
+    assert!(after_cancel.auth_input.is_empty(), "cancel must forget a typed key");
+
+    assert!(after_apply.settings_open, "apply keeps the dialog open");
+    assert_eq!(after_apply.addr, "http://127.0.0.1:9999");
+    assert_eq!(after_apply.mode, "pull");
+    assert!(!model::settings_dirty(&after_apply), "applied draft is clean");
+    assert!(after_apply.settings_note.is_empty(), "apply writes no footer note");
+
+    assert!(!after_save.settings_open, "save closes the dialog");
 }

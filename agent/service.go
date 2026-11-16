@@ -66,6 +66,10 @@ func ControlService(action string, cfg Config, flagArgs []string) (string, error
 	if err != nil {
 		return "", err
 	}
+	// Only install turns these flags into the service command. For start,
+	// stop, status and uninstall the flags are irrelevant, so the "read root
+	// defaulting to ..." note would describe nothing that is running.
+	cfg.quietDefaults = action != "install"
 	if err := cfg.applyDefaults(); err != nil {
 		return "", err
 	}
@@ -100,6 +104,9 @@ func ControlService(action string, cfg Config, flagArgs []string) (string, error
 	}
 }
 
+// installUserService registers the service and starts it, so one command
+// leaves the agent running. A failed start keeps the installation and
+// reports how to retry.
 func installUserService(spec serviceSpec, authKey string) (string, error) {
 	if _, err := applyPlatformService("status", spec); err == nil {
 		return "", errors.New("service is already installed for this user; run uninstall, then install, to change flags or account")
@@ -110,16 +117,25 @@ func installUserService(spec serviceSpec, authKey string) (string, error) {
 		if err := storeAuthKey(spec.StateDir, authKey); err != nil {
 			return "", err
 		}
-		log.Printf("tailfile: -authkey was stored in the state directory and omitted from the service command (value not logged)")
+		log.Printf("tailfile: --authkey was stored in the state directory and omitted from the service command (value not logged)")
 	}
 	if err := writeServiceConfig(spec); err != nil {
 		return "", err
 	}
-	return applyPlatformService("install", spec)
+	msg, err := applyPlatformService("install", spec)
+	if err != nil {
+		return "", err
+	}
+	started, err := applyPlatformService("start", spec)
+	if err != nil {
+		return "", fmt.Errorf("%s, but starting it failed: %w (fix the cause, then run: tailfile-agent service start)", msg, err)
+	}
+	return msg + "\n" + started, nil
 }
 
-// PrepareServiceArgs drops -authkey (returned separately) and rejects --system.
+// PrepareServiceArgs drops --authkey (returned separately) and rejects --system.
 // The returned arguments are safe to put in a unit file, plist, or task.
+// Single-dash spellings (-authkey, -system) are accepted too, as Go's flag package does.
 func PrepareServiceArgs(flagArgs []string) (args []string, authKey string, err error) {
 	for i := 0; i < len(flagArgs); i++ {
 		a := flagArgs[i]
@@ -137,7 +153,7 @@ func PrepareServiceArgs(flagArgs []string) (args []string, authKey string, err e
 				continue
 			}
 			if i+1 >= len(flagArgs) {
-				return nil, "", errors.New("-authkey requires a value")
+				return nil, "", errors.New("--authkey requires a value")
 			}
 			i++
 			authKey = flagArgs[i]
@@ -148,26 +164,32 @@ func PrepareServiceArgs(flagArgs []string) (args []string, authKey string, err e
 	return args, authKey, nil
 }
 
+// stableServiceArgs appends resolved values for flags the user omitted.
+// Added flags use the --name form.
 func stableServiceArgs(args []string, cfg Config) []string {
-	if !hasRawFlag(args, "-hostname") && !hasRawFlag(args, "--hostname") && cfg.Hostname != "" {
-		args = append(args, "-hostname", cfg.Hostname)
+	if !hasRawFlag(args, "hostname") && cfg.Hostname != "" {
+		args = append(args, "--hostname", cfg.Hostname)
 	}
-	if !hasRawFlag(args, "-state") && !hasRawFlag(args, "--state") && cfg.StateDir != "" {
-		args = append(args, "-state", cfg.StateDir)
+	if !hasRawFlag(args, "state") && cfg.StateDir != "" {
+		args = append(args, "--state", cfg.StateDir)
 	}
-	if !hasRawFlag(args, "-net") && !hasRawFlag(args, "--net") && cfg.Net != "" {
-		args = append(args, "-net", cfg.Net)
+	if !hasRawFlag(args, "net") && cfg.Net != "" {
+		args = append(args, "--net", cfg.Net)
 	}
-	if !hasRawFlag(args, "-read") && !hasRawFlag(args, "--read") && len(cfg.ReadRoots) > 0 {
-		args = append(args, "-read", strings.Join(cfg.ReadRoots, ","))
+	if !hasRawFlag(args, "read") && len(cfg.ReadRoots) > 0 {
+		args = append(args, "--read", strings.Join(cfg.ReadRoots, ","))
 	}
 	return args
 }
 
+// hasRawFlag reports whether args sets the flag name as -name or --name,
+// with or without =value.
 func hasRawFlag(args []string, name string) bool {
 	for _, a := range args {
-		if a == name || strings.HasPrefix(a, name+"=") {
-			return true
+		for _, n := range []string{"-" + name, "--" + name} {
+			if a == n || strings.HasPrefix(a, n+"=") {
+				return true
+			}
 		}
 	}
 	return false

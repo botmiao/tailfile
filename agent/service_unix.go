@@ -5,6 +5,8 @@ package agent
 import (
 	"errors"
 	"fmt"
+	"log"
+	"os/exec"
 
 	"github.com/kardianos/service"
 )
@@ -40,8 +42,19 @@ func applyPlatformService(action string, spec serviceSpec) (string, error) {
 		}
 		return "installed per-user service " + spec.Name + " for the current user", nil
 	case "uninstall":
+		// kardianos's systemd Uninstall only disables the unit and deletes
+		// its file: a running agent keeps running, and systemd keeps the
+		// stale unit loaded until a daemon-reload. Stop it first (an error
+		// just means it was not running), then reload. launchd's Uninstall
+		// already stops.
+		_ = svc.Stop()
 		if err := svc.Uninstall(); err != nil {
 			return "", err
+		}
+		if svc.Platform() == "linux-systemd" {
+			if out, err := exec.Command("systemctl", "--user", "daemon-reload").CombinedOutput(); err != nil {
+				log.Printf("tailfile: systemctl --user daemon-reload: %v %s", err, out)
+			}
 		}
 		return "uninstalled per-user service " + spec.Name, nil
 	case "start":

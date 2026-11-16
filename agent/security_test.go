@@ -54,13 +54,12 @@ func TestLocalRequiresTokenAndLoopbackHost(t *testing.T) {
 	mustCode(do(http.MethodGet, "", "", "nope"), 401)
 	mustCode(do(http.MethodGet, "http://evil.example", "", testGUIToken), 403)
 	mustCode(do(http.MethodGet, "http://127.0.0.1:80", "", testGUIToken), 403)
+	// The retired web dev frontend origin is refused too.
+	mustCode(do(http.MethodGet, "http://127.0.0.1:17431", "", testGUIToken), 403)
 
-	ok := do(http.MethodGet, "http://127.0.0.1:17431", "", testGUIToken)
-	if got := ok.Header.Get("Access-Control-Allow-Origin"); got != "http://127.0.0.1:17431" {
-		t.Fatalf("ACAO %q", got)
-	}
-	if strings.Contains(ok.Header.Get("Access-Control-Allow-Origin"), "*") {
-		t.Fatal("wildcard origin")
+	ok := do(http.MethodGet, "", "", testGUIToken)
+	if got := ok.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("ACAO without origin %q", got)
 	}
 	mustCode(ok, 200)
 
@@ -68,10 +67,13 @@ func TestLocalRequiresTokenAndLoopbackHost(t *testing.T) {
 	if nsh.Header.Get("Access-Control-Allow-Origin") != "nsh://tailfile" {
 		t.Fatalf("nsh ACAO %q", nsh.Header.Get("Access-Control-Allow-Origin"))
 	}
+	if strings.Contains(nsh.Header.Get("Access-Control-Allow-Origin"), "*") {
+		t.Fatal("wildcard origin")
+	}
 	mustCode(nsh, 200)
 
 	mustCode(do(http.MethodGet, "", "rebind.example", testGUIToken), 403)
-	mustCode(do(http.MethodOptions, "http://127.0.0.1:17431", "", ""), 204)
+	mustCode(do(http.MethodOptions, "nsh://tailfile", "", ""), 204)
 	mustCode(do(http.MethodOptions, "http://evil.example", "", ""), 403)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/health", nil)
@@ -188,7 +190,7 @@ func TestResolveOwnerTaggedDevice(t *testing.T) {
 	if _, err := ResolveOwner("tagged-devices", false, ""); err == nil {
 		t.Fatal("expected an error")
 	}
-	if _, err := ResolveOwner("ada@example.com", true, ""); err == nil || !strings.Contains(err.Error(), "-owner") {
+	if _, err := ResolveOwner("ada@example.com", true, ""); err == nil || !strings.Contains(err.Error(), "--owner") {
 		t.Fatalf("tagged node: %v", err)
 	}
 	got, err := ResolveOwner("tagged-devices", true, "ada@example.com")

@@ -10,12 +10,12 @@ import (
 
 func TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem(t *testing.T) {
 	secret := "tskey-auth-super-secret"
-	_, _, err := PrepareServiceArgs([]string{"-net", "tsnet", "--system"})
+	_, _, err := PrepareServiceArgs([]string{"--net", "tsnet", "--system"})
 	if !errorsIs(err, ErrUserServiceOnly) {
 		t.Fatalf("system scope: %v", err)
 	}
 	args, key, err := PrepareServiceArgs([]string{
-		"-net", "tsnet", "-authkey", secret, "-read", "/home/ada/Tailfile", "--authkey=" + secret,
+		"--net", "tsnet", "--authkey", secret, "--read", "/home/ada/Tailfile", "--authkey=" + secret,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestPrepareServiceArgsOmitsAuthKeyAndRejectsSystem(t *testing.T) {
 	if strings.Contains(joined, secret) || strings.Contains(joined, "authkey") {
 		t.Fatalf("service args leaked the key: %q", args)
 	}
-	if !strings.Contains(joined, "-net") || !strings.Contains(joined, "/home/ada/Tailfile") {
+	if !strings.Contains(joined, "--net") || !strings.Contains(joined, "/home/ada/Tailfile") {
 		t.Fatalf("args %q", args)
 	}
 }
@@ -43,9 +43,9 @@ func TestStableServiceArgsAndConfig(t *testing.T) {
 		Port:      8644,
 		LocalAddr: "127.0.0.1:8645",
 	}
-	args := stableServiceArgs([]string{"-write", cfg.ReadRoots[0]}, cfg)
+	args := stableServiceArgs([]string{"--write", cfg.ReadRoots[0]}, cfg)
 	joined := strings.Join(args, "\n")
-	for _, want := range []string{"-hostname", "tailfile-box", "-state", state, "-net", "system", "-read", "-write"} {
+	for _, want := range []string{"--hostname", "tailfile-box", "--state", state, "--net", "system", "--read", "--write"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing %s in %q", want, args)
 		}
@@ -83,7 +83,7 @@ func TestWindowsLogonTaskDoesNotElevate(t *testing.T) {
 	spec := serviceSpec{
 		Description: "Tailfile agent for the current user",
 		Executable:  `C:\Program Files\Tailfile\tailfile-agent.exe`,
-		Arguments:   []string{"-net", "system", "-read", `C:\Users\Ada\My Tailfile`, "-hostname", "box"},
+		Arguments:   []string{"--net", "system", "--read", `C:\Users\Ada\My Tailfile`, "--hostname", "box"},
 	}
 	xml := windowsTaskXML(spec)
 	for _, want := range []string{"LogonTrigger", "LeastPrivilege", "InteractiveToken", "PT0S", spec.Executable, "My Tailfile"} {
@@ -112,7 +112,7 @@ func TestServicePlanStoresAuthKeyOutsideTheUnit(t *testing.T) {
 	log.SetOutput(&logBuf)
 	t.Cleanup(func() { log.SetOutput(os.Stderr) })
 
-	args, key, err := PrepareServiceArgs([]string{"-net", "tsnet", "-authkey", secret, "-hostname", "box"})
+	args, key, err := PrepareServiceArgs([]string{"--net", "tsnet", "--authkey", secret, "--hostname", "box"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,11 +164,24 @@ func TestServicePlanStoresAuthKeyOutsideTheUnit(t *testing.T) {
 	}
 	os.Unsetenv("TS_AUTHKEY")
 	got, source = resolveAuthKey(Config{StateDir: state, AuthKey: "from-flag"})
-	if got != "from-flag" || source != "-authkey" {
+	if got != "from-flag" || source != "--authkey" {
 		t.Fatalf("flag precedence %q %q", got, source)
 	}
 }
 
 func errorsIs(err, target error) bool {
 	return err != nil && (err == target || strings.Contains(err.Error(), target.Error()))
+}
+
+func TestStableServiceArgsAcceptsSingleDash(t *testing.T) {
+	cfg := Config{Hostname: "tailfile-box", StateDir: "/s", Net: "auto", ReadRoots: []string{"/r"}}
+	args := stableServiceArgs([]string{"-net", "system", "-read=/x", "-hostname", "h", "-state", "/t"}, cfg)
+	if len(args) != 7 {
+		t.Fatalf("single-dash flags were re-added: %v", args)
+	}
+	args = stableServiceArgs(nil, cfg)
+	want := []string{"--hostname", "tailfile-box", "--state", "/s", "--net", "auto", "--read", "/r"}
+	if strings.Join(args, " ") != strings.Join(want, " ") {
+		t.Fatalf("added flags = %v, want %v", args, want)
+	}
 }

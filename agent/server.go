@@ -45,8 +45,11 @@ type Server struct {
 	guiToken string
 	stateDir string
 
-	cacheDir string
-	selfID   string
+	// cacheDir is guarded by mu: the local GUI can change it at runtime.
+	cacheDir     string
+	cacheDefault string
+	cacheCustom  bool
+	selfID       string
 
 	dropMu   sync.Mutex
 	dropNode string

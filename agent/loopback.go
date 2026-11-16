@@ -29,7 +29,7 @@ type LoopSpec struct {
 }
 
 // Loopback is a set of in-process agents plus a localhost orchestrator.
-// It is the test harness and the -demo mode. It is not a tailnet:
+// It is the test harness and the --demo mode. It is not a tailnet:
 // peers trust a header that production WhoIs never reads.
 type Loopback struct {
 	Owner string

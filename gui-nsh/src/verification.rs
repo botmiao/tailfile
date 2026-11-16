@@ -1138,7 +1138,7 @@ fn inv3_state_machine_and_data_flow_proofs() {
     assert_eq!(ui.selected, 1);
 
     h.with_state(|state| {
-        model::toggle_select_path(state, "/tmp/demo/alpha/photos".into());
+        // Ctrl-click after a plain click: the clicked row joins the set.
         model::toggle_select_path(state, "/tmp/demo/alpha/hello.txt".into());
         model::toggle_select_path(state, "/tmp/demo/alpha/report.pdf".into());
     });
@@ -1151,6 +1151,19 @@ fn inv3_state_machine_and_data_flow_proofs() {
             "/tmp/demo/alpha/report.pdf",
         ]
     );
+    // Focus follows the item just added; highlight is exactly the set.
+    assert_eq!(
+        model::selected(&ui).map(|e| e.path).as_deref(),
+        Some("/tmp/demo/alpha/report.pdf")
+    );
+    for (i, e) in ui.entries.iter().enumerate() {
+        assert_eq!(
+            model::is_row_selected(&ui, i, &e.path),
+            ui.selected_paths.contains(&e.path),
+            "{}",
+            e.path
+        );
+    }
 
     h.with_state(|state| model::toggle_select_path(state, "/tmp/demo/alpha/report.pdf".into()));
     let ui = h.read_ui();
@@ -1158,6 +1171,51 @@ fn inv3_state_machine_and_data_flow_proofs() {
         ui.selected_paths,
         vec!["/tmp/demo/alpha/photos", "/tmp/demo/alpha/hello.txt"]
     );
+    assert_eq!(
+        model::selected(&ui).map(|e| e.path).as_deref(),
+        Some("/tmp/demo/alpha/hello.txt")
+    );
+
+    // Ctrl-click outside the open folder is ignored.
+    h.with_state(|state| model::toggle_select_path(state, "/etc/passwd".into()));
+    assert_eq!(h.read_ui().selected_paths.len(), 2);
+
+    // Toggling everything off leaves nothing highlighted.
+    h.with_state(|state| {
+        model::toggle_select_path(state, "/tmp/demo/alpha/photos".into());
+        model::toggle_select_path(state, "/tmp/demo/alpha/hello.txt".into());
+    });
+    let ui = h.read_ui();
+    assert!(ui.selected_paths.is_empty());
+    assert_eq!(ui.selected, -1);
+    assert!((0..ui.entries.len()).all(|i| !model::is_row_selected(&ui, i, &ui.entries[i].path)));
+
+    // Shift-click: a range in display order from the focused anchor.
+    h.with_state(|state| {
+        let vis = model::visible_entries(&state.get());
+        model::click_row(state, vis[0].0 as i32, 1);
+        model::select_range(state, vis[2].0 as i32);
+    });
+    let ui = h.read_ui();
+    let vis = model::visible_entries(&ui);
+    let want: Vec<String> = vis[0..=2].iter().map(|(_, e)| e.path.clone()).collect();
+    assert_eq!(ui.selected_paths, want);
+    assert_eq!(ui.selected, vis[0].0 as i32, "anchor keeps focus");
+    // Re-ranging from the same anchor shrinks the set.
+    h.with_state(|state| {
+        let vis = model::visible_entries(&state.get());
+        model::select_range(state, vis[1].0 as i32);
+    });
+    assert_eq!(h.read_ui().selected_paths, want[0..=1].to_vec());
+
+    // Select all: every visible row.
+    h.with_state(model::select_all);
+    let ui = h.read_ui();
+    assert_eq!(ui.selected_paths.len(), model::visible_entries(&ui).len());
+    // Rename needs exactly one item.
+    h.with_state(model::begin_rename);
+    assert!(!h.read_ui().inline_rename);
+    h.with_state(|state| state.update(|ui| ui.selected_paths.clear()));
 
     // 4. Filtering & sorting: set_filter, cycle_sort, visible_entries.
     h.with_state(|state| model::set_filter(state, "PDF".into()));
@@ -1834,6 +1892,7 @@ fn inv5_end_to_end_agent_integration_proofs() {
             active_tab: 0,
             preview_on: true,
             sidebar_collapsed: false,
+            transfer_mode: "push".into(),
         },
     );
     let persisted_raw = std::fs::read_to_string(mock.state_dir.join("nsh-ui.json")).unwrap();

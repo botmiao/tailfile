@@ -55,6 +55,8 @@ func (s *Server) localRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/local/settings", s.handleSettings)
 	mux.HandleFunc("PUT /v1/local/settings/authkey", s.handleAuthKeyPut)
 	mux.HandleFunc("DELETE /v1/local/settings/authkey", s.handleAuthKeyDelete)
+	mux.HandleFunc("PUT /v1/local/settings/cachedir", s.handleCacheDirPut)
+	mux.HandleFunc("POST /v1/local/cache/open", s.handleCacheDirOpen)
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +276,6 @@ func (s *Server) handleRename(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 func (s *Server) handleDelete(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -786,15 +787,17 @@ func (s *Server) cache(ctx context.Context, req CacheRequest) (CacheResult, erro
 	if st.IsDir {
 		return CacheResult{}, statusErr(400, "cache a file, not a folder")
 	}
-	dir := s.cacheDir
+	dir, custom := s.cacheTarget()
 	if dir == "" {
 		dir = os.TempDir()
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return CacheResult{}, err
 	}
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return CacheResult{}, err
+	if !custom {
+		if err := os.Chmod(dir, 0o700); err != nil {
+			return CacheResult{}, err
+		}
 	}
 	name := BaseRemote(st.Path)
 	dest := filepath.Join(dir, cacheObjectName(req.Node, st.Path, name))

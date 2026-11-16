@@ -16,6 +16,8 @@ type Settings struct {
 	Net               string `json:"net"`
 	NetRequested      string `json:"netRequested,omitempty"`
 	AuthKeyConfigured bool   `json:"authKeyConfigured"`
+	CacheDir          string `json:"cacheDir"`
+	CacheDirDefault   string `json:"cacheDirDefault"`
 }
 
 // AuthKeyStatus is the only response a key write or delete returns.
@@ -78,14 +80,14 @@ func authKeyConfigured(stateDir string) bool {
 }
 
 // resolveAuthKey chooses the tsnet auth key.
-// TS_AUTHKEY wins over -authkey, which wins over the ts-authkey file.
-// The key itself is not logged; source is "TS_AUTHKEY", "-authkey", "file", or "".
+// TS_AUTHKEY wins over --authkey, which wins over the ts-authkey file.
+// The key itself is not logged; source is "TS_AUTHKEY", "--authkey", "file", or "".
 func resolveAuthKey(cfg Config) (key, source string) {
 	if k := strings.TrimSpace(os.Getenv("TS_AUTHKEY")); k != "" {
 		return k, "TS_AUTHKEY"
 	}
 	if k := strings.TrimSpace(cfg.AuthKey); k != "" {
-		return k, "-authkey"
+		return k, "--authkey"
 	}
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		return "", ""
@@ -115,14 +117,21 @@ func (s *Server) currentSettings() Settings {
 	mode := s.mode
 	requested := s.netRequested
 	dir := s.stateDir
+	cacheDir := s.cacheDir
+	cacheDefault := s.cacheDefault
 	s.mu.Unlock()
 	if mode == "" {
 		mode = "unknown"
+	}
+	if cacheDefault == "" {
+		cacheDefault = cacheDir
 	}
 	return Settings{
 		Net:               mode,
 		NetRequested:      requested,
 		AuthKeyConfigured: authKeyConfigured(dir),
+		CacheDir:          cacheDir,
+		CacheDirDefault:   cacheDefault,
 	}
 }
 

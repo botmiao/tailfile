@@ -8,7 +8,7 @@
 
 - GUI：`cargo run -p tailfile-nsh -- --demo`（或已有 agent）打开单窗格；左侧节点树；顶栏标签（主机 › 目录）；工具栏/面包屑/筛选；右键/快捷键新建文件夹、F2 重命名、Delete 确认后永久删除；跨主机复制粘贴沿用 覆盖/跳过；设置保留 auth-key 并加外观；daemon 不可达时展示可复制的安装命令。
 - Agent：`POST /v1/fs/delete` JSON `{node?, path}`，鉴权同 mkdir；写白名单内、禁止删配置根、防穿越/符号链接逃逸。
-- 客户端：`Client::delete(node, path)`；演示 `-demo` 可测全流程。
+- 客户端：`Client::delete(node, path)`；演示 `--demo` 可测全流程。
 
 ## Shape
 
