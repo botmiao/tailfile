@@ -1,75 +1,102 @@
-name: ci
+name: CI
 
 on:
   push:
+    branches: [ main, master ]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  agent:
-    runs-on: ubuntu-24.04
+  test:
+    name: Go Vet & Tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
-      - name: Test and cross-compile the agent
-        working-directory: agent
+          go-version-file: go.mod
+          cache: true
+      - name: Check Go formatting
+        if: runner.os == 'Linux'
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "Files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Vet
+        run: go vet ./...
+      - name: Test (with race detector)
+        if: runner.os != 'Windows'
         env:
-          GOWORK: "off"
-        run: |
-          go test -count=1 -race -timeout 180s .
-          CGO_ENABLED=0 go build -o /tmp/tailfile-agent ./cmd/tailfile-agent
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o /tmp/tailfile-agent-arm64 ./cmd/tailfile-agent
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o /tmp/tailfile-agent.exe ./cmd/tailfile-agent
-          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o /tmp/tailfile-agent-arm64.exe ./cmd/tailfile-agent
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o /tmp/tailfile-agent-darwin ./cmd/tailfile-agent
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o /tmp/tailfile-agent-darwin-arm64 ./cmd/tailfile-agent
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+      - name: Test (pure Go)
+        if: runner.os == 'Windows'
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./...
 
-  nsh:
-    runs-on: ubuntu-24.04
+  cross-compile:
+    name: Cross-Compile Desktop & Vet Mobile
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.27.3"
-      - uses: dtolnay/rust-toolchain@stable
-      - name: GTK 4 headers
-        run: sudo apt-get update && sudo apt-get install -y pkg-config libgtk-4-dev clang xvfb
-      - name: Test the client and build the Linux window
-        working-directory: gui-nsh
+          go-version-file: go.mod
+          cache: true
+      - name: Build 6 Desktop Targets (CGO_ENABLED=0)
         run: |
-          cargo test --lib --test demo_agent -- --test-threads=8
-          cargo build --release
-      - name: Window stays up against the demo agent
-        run: |
-          (cd agent && GOWORK=off go build -o /tmp/tailfile-agent ./cmd/tailfile-agent)
-          rm -rf /tmp/tf-nsh-ci
-          mkdir -p /tmp/tf-nsh-ci
-          /tmp/tailfile-agent --demo --state /tmp/tf-nsh-ci --listen 127.0.0.1:8645 >/tmp/tf-agent.log 2>&1 &
-          echo $! >/tmp/tf-agent.pid
-          for i in $(seq 1 50); do
-            if [ -s /tmp/tf-nsh-ci/gui-token ]; then
-              break
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            ext=""
+            ldflags="-s -w -X tailfile.local/internal/agent.Version=ci"
+            if [ "$os" = "windows" ]; then
+              ext=".exe"
+              ldflags="${ldflags} -H=windowsgui"
             fi
-            sleep 0.1
+            out="/tmp/tailfile-${os}-${arch}${ext}"
+            CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -tags mygo_nowebview -ldflags="$ldflags" -o "$out" .
+            test -s "$out"
           done
-          test -s /tmp/tf-nsh-ci/gui-token
-          set +e
-          xvfb-run -a timeout 8s "$GITHUB_WORKSPACE/gui-nsh/target/release/tailfile-nsh" --agent http://127.0.0.1:8645 --state /tmp/tf-nsh-ci
-          code=$?
-          set -e
-          kill "$(cat /tmp/tf-agent.pid)" || true
-          # timeout exits 124 when the window is still running, which is what we want.
-          test "$code" -eq 124
+      - name: Vet Android Core Packages (CGO_ENABLED=0)
+        run: CGO_ENABLED=0 GOOS=android GOARCH=arm64 go vet ./internal/agent ./internal/cliflag ./internal/guitoken
 
-  nsh-windows:
-    runs-on: windows-latest
+  scripts-check:
+    name: Validate Installer & Build Scripts
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Test and build the Win32 shell
-        working-directory: gui-nsh
+      - name: Check POSIX shell and Bash scripts
         run: |
-          cargo test --lib --test demo_agent -- --test-threads=8
-          cargo build --release
-          if (!(Test-Path .\target\release\tailfile-nsh.exe)) { throw "missing tailfile-nsh.exe" }
+          sh -n scripts/install.sh
+          bash -n scripts/build-all.sh scripts/install-agent.sh
+          shellcheck scripts/install.sh scripts/build-all.sh scripts/install-agent.sh
+      - name: Check PowerShell installer AST and ASCII encoding
+        shell: pwsh
+        run: |
+          $bytes = [System.IO.File]::ReadAllBytes('scripts/install.ps1')
+          $nonAscii = $bytes | Where-Object { $_ -gt 127 }
+          if ($nonAscii.Count -gt 0) {
+            throw "Found non-ASCII bytes in scripts/install.ps1"
+          }
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile('scripts/install.ps1', [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count -gt 0) {
+            throw ($errors | Out-String)
+          }

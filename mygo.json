@@ -1,0 +1,19 @@
+{
+  "name": "Tailfile",
+  "slug": "tailfile",
+  "identifier": "dev.iori.tailfile",
+  "version": "0.2.0",
+  "license": "MIT",
+  "icon": "resources/icon.png",
+  "out": "build",
+  "linux": {
+    "webview": false,
+    "command": "tailfile"
+  },
+  "ios": {
+    "minimumSystemVersion": "17.0"
+  },
+  "android": {
+    "minSdk": 26
+  }
+}

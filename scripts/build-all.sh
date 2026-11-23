@@ -1,42 +1,98 @@
 #!/usr/bin/env bash
-# Compile and test the Tailfile agent and Native Shell GUI (gui-nsh).
-set -u
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-if [[ -x "$HOME/sdk/go1.27.3/bin/go" ]]; then
-  export PATH="$HOME/sdk/go1.27.3/bin:$PATH"
+set -euo pipefail
+
+# Cross-compile and package pure-Go Tailfile release archives across desktop platforms.
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DIST="${DIST_DIR:-$REPO_ROOT/dist}"
+
+if [[ -z "${VERSION:-}" ]]; then
+  VERSION="$(sed -n 's/^[[:space:]]*"version":[[:space:]]*"\([^"]*\)".*/\1/p' "$REPO_ROOT/mygo.json" | head -n 1)"
 fi
-export GOTOOLCHAIN="${GOTOOLCHAIN:-local}"
-export GOWORK=off
-OUT="${OUT:-$ROOT/build-out}"
-mkdir -p "$OUT"
-fail=0
-
-note() { printf '\n== %s\n' "$*"; }
-
-note "agent tests"
-( cd "$ROOT/agent" && go test -count=1 -timeout 180s . ) || fail=1
-
-note "agent binaries"
-( cd "$ROOT/agent" && CGO_ENABLED=0 go build -o "$OUT/tailfile-agent-linux" ./cmd/tailfile-agent ) || fail=1
-( cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o "$OUT/tailfile-agent-linux-arm64" ./cmd/tailfile-agent ) || fail=1
-( cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$OUT/tailfile-agent-windows.exe" ./cmd/tailfile-agent ) || fail=1
-( cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o "$OUT/tailfile-agent-windows-arm64.exe" ./cmd/tailfile-agent ) || fail=1
-( cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o "$OUT/tailfile-agent-darwin-amd64" ./cmd/tailfile-agent ) || fail=1
-( cd "$ROOT/agent" && CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o "$OUT/tailfile-agent-darwin-arm64" ./cmd/tailfile-agent ) || fail=1
-
-note "gui-nsh tests and binary"
-if command -v cargo >/dev/null; then
-  ( cd "$ROOT/gui-nsh" && cargo test --lib --test demo_agent ) || fail=1
-  if pkg-config --exists gtk4; then
-    ( cd "$ROOT/gui-nsh" && cargo build --release && cp target/release/tailfile-nsh "$OUT/tailfile-nsh-linux" ) || fail=1
-  fi
-fi
-
-note "sizes"
-wc -c "$OUT"/tailfile-* | sort
-echo
-if [[ "$fail" -ne 0 ]]; then
-  echo "build-all: a required step failed"
+VERSION="${VERSION#v}"
+if [[ -z "$VERSION" ]]; then
+  echo "error: unable to determine VERSION from env or mygo.json" >&2
   exit 1
 fi
-echo "build-all: required steps passed"
+
+STAGE_ROOT="$(mktemp -d)"
+trap 'rm -rf "$STAGE_ROOT"' EXIT
+
+mkdir -p "$DIST"
+DIST="$(cd "$DIST" && pwd)"
+rm -f "$DIST"/tailfile_*.tar.gz "$DIST"/tailfile_*.zip "$DIST"/SHA256SUMS.txt
+
+zip_dir() {
+  local src_dir="$1"
+  local out_zip="$2"
+  if command -v zip >/dev/null 2>&1; then
+    zip -q -j "$out_zip" "$src_dir"/*
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 - "$src_dir" "$out_zip" <<'PY'
+import os, sys, zipfile
+src_dir, out_zip = sys.argv[1], sys.argv[2]
+with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+    for name in sorted(os.listdir(src_dir)):
+        zf.write(os.path.join(src_dir, name), arcname=name)
+PY
+  else
+    echo "error: neither zip nor python3 is installed to package $out_zip" >&2
+    exit 1
+  fi
+}
+
+build_target() {
+  local os="$1"
+  local arch="$2"
+  local bin="tailfile"
+  local ldflags="-s -w -X tailfile.local/internal/agent.Version=${VERSION}"
+  if [[ "$os" == "windows" ]]; then
+    bin="tailfile.exe"
+    ldflags="${ldflags} -H=windowsgui"
+  fi
+
+  local stage="$STAGE_ROOT/${os}-${arch}"
+  mkdir -p "$stage"
+  echo "Building ${os}/${arch} (v${VERSION})..."
+  (
+    cd "$REPO_ROOT"
+    CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+      go build -trimpath -tags mygo_nowebview -ldflags="$ldflags" -o "$stage/$bin" .
+  )
+
+  cp "$REPO_ROOT/LICENSE" "$stage/LICENSE"
+  cp "$REPO_ROOT/README.md" "$stage/README.md"
+
+  if [[ "$os" == "windows" ]]; then
+    local out="$DIST/tailfile_${VERSION}_windows_${arch}.zip"
+    zip_dir "$stage" "$out"
+  else
+    local out="$DIST/tailfile_${VERSION}_${os}_${arch}.tar.gz"
+    tar -C "$stage" -czf "$out" "$bin" LICENSE README.md
+  fi
+}
+
+build_target linux amd64
+build_target linux arm64
+build_target darwin amd64
+build_target darwin arm64
+build_target windows amd64
+build_target windows arm64
+
+cp "$REPO_ROOT/scripts/install.sh" "$DIST/install.sh"
+chmod 0755 "$DIST/install.sh"
+cp "$REPO_ROOT/scripts/install.ps1" "$DIST/install.ps1"
+
+(
+  cd "$DIST"
+  if command -v sha256sum >/dev/null 2>&1; then
+    LC_ALL=C sha256sum tailfile_*.tar.gz tailfile_*.zip > SHA256SUMS.txt
+  elif command -v shasum >/dev/null 2>&1; then
+    LC_ALL=C shasum -a 256 tailfile_*.tar.gz tailfile_*.zip > SHA256SUMS.txt
+  else
+    echo "error: sha256sum or shasum is required to generate SHA256SUMS.txt" >&2
+    exit 1
+  fi
+)
+
+echo "Release artifacts written to $DIST"

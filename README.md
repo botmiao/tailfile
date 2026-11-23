@@ -1,278 +1,166 @@
 # Tailfile
 
-基于 Tailscale 文件 agent 的跨平台桌面文件管理器，桌面客户端采用 [Native Shell (`nsh`)](https://nsh.dev)（`gui-nsh/`，Rust 编写，Linux 上使用 GTK 4，Windows 上使用 Win32/Direct2D，macOS 上使用 AppKit）。已支持标签页、深浅主题、双击进入目录、右键上下文菜单、新建文件夹、重命名、删除（确认后永久删除）、跨节点复制粘贴与冲突处理、按用户服务安装及 daemon 引导。进程不提权。
+[![CI](https://github.com/botmiao/tailfile/actions/workflows/ci.yml/badge.svg)](https://github.com/botmiao/tailfile/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/botmiao/tailfile)](https://github.com/botmiao/tailfile/releases/latest)
+[![Go 1.27+](https://img.shields.io/badge/Go-1.27%2B-00ADD8?logo=go&logoColor=white)](go.mod)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-左侧窗格是一棵树。根节点是运行 agent 的 tailnet 节点，下面是文件夹。右侧窗格是文件列表（名称、大小、修改时间），以及文本、图片和 PDF 文本的预览。在节点 A 上复制，粘贴到节点 B 的某个文件夹。GUI 只负责让其中一个 agent 推送（push）或拉取（pull），文件字节直接从 A 传到 B。
+English | [简体中文](README.zh-CN.md)
 
-```
-gui-nsh  --localhost-->  local agent  --tailnet-->  peer agent
-                              |                         |
-                              +---- job: push or pull --+
-```
+**Tailfile** is a unified single-binary file browser and Tailnet node agent written in pure Go (`CGO_ENABLED=0`) with a native desktop UI powered by [MyGo](https://github.com/egoist/mygo).
 
-## 目录结构
+Install one executable everywhere: run `tailfile` directly for zero-config desktop file browsing and tray background sharing, or run `tailfile service install` / `tailfile agent` on headless servers.
 
-| 路径 | 说明 |
-| --- | --- |
-| `agent/` | Go 编写的后台与节点通信模块。文件 API、可续传分块、复制任务、系统 tailscaled 或 tsnet。 |
-| `gui-nsh/` | [Native Shell](https://nsh.dev) 桌面客户端（Rust）。Linux 上是 GTK 4，Windows 上是 Win32/Direct2D，macOS 上是 AppKit。 |
+![Tailfile Desktop UI](docs/screenshots/desktop-dark.png)
 
-GUI 通过 `http://127.0.0.1:8645` 与本地 agent 通信，自身不内嵌 tailnet 节点。每台机器运行一个 agent。无论 agent 使用的是系统 tailscaled 还是内嵌的 tsnet 节点，GUI API 都相同。
+## Platform Support & Roadmap
 
-Agent 需要 **Go 1.27.3**。
+| Platform | Architectures | Status | Distribution |
+| --- | --- | --- | --- |
+| **Windows** | `amd64`, `arm64` | Supported (`v0.2.0`) | `install.ps1` / `.zip` |
+| **macOS** | `amd64`, `arm64` | Supported (`v0.2.0`) | `install.sh` / `.tar.gz` |
+| **Linux** | `amd64`, `arm64` | Supported (`v0.2.0`) | `install.sh` / `.tar.gz` |
+| **Android / iOS** | `arm64` | Roadmap | Responsive `<820pt` mobile UI is ready in code; mobile `tsnet` login and `.apk`/`.ipa` installers are planned next |
 
-Native Shell 客户端是独立的 Rust crate（`gui-nsh/`）。它要求 **rustc >= 1.97**（edition 2024；`gui-nsh/Cargo.toml` 显式声明了 `rust-version = "1.97"`，`rust-toolchain.toml` 锁定为 1.97.0，已在 rustc 1.99.1 下验证测试）和 crates.io 上的 `nsh-core` / `nsh-base` / `nsh-platform-*` **0.3.0**。用户可通过 `rustc --version` 检查版本，必要时执行 `rustup update stable` 升级。日常构建直接使用 `cargo build` 即可，不强制安装 `nsh` CLI。Linux 编译需要 GTK 4 开发包；Windows 上使用 Win32/Direct2D，不需要 GTK。
+## Prerequisites
 
-## 不用 tailnet 先试一下
-
-下面的命令都假定从仓库根目录开始。Linux / macOS：
-
-```sh
-cd agent
-go build -o tailfile-agent ./cmd/tailfile-agent
-./tailfile-agent --demo
-```
-
-Windows（PowerShell）：
-
-```powershell
-cd agent
-go build -o tailfile-agent.exe ./cmd/tailfile-agent
-.\tailfile-agent.exe --demo
-```
-
-**Windows 注意：** 用 `-o` 指定输出文件名时，Go 不会自动加 `.exe`。请在 `-o` 中写上 `.exe`。
-
-`--demo` 会在进程内启动三个节点：`alpha` 和 `beta`（可写）以及 `gamma`（只读），所有者为 `ada@example.com`。不会加入任何 tailnet。API 位于 `http://127.0.0.1:8645`。`--demo` 会忽略 `--net`。
-
-agent 在前台运行。接下来在第二个终端（从仓库根目录）启动 `gui-nsh`。
-
-Linux / macOS：
-
-```sh
-cd gui-nsh
-cargo build --release
-./target/release/tailfile-nsh --agent http://127.0.0.1:8645
-```
-
-Windows（PowerShell）：
-
-```powershell
-cd gui-nsh
-cargo build --release
-.\target\release\tailfile-nsh.exe --agent http://127.0.0.1:8645
-```
-
-`cargo run --release -- --agent http://127.0.0.1:8645` 等价。如果 agent 使用了非默认状态目录，GUI 也要通过 `--state` 或 `--token-file` 指向同一目录；也可设置环境变量 `TAILFILE_AGENT`、`TAILFILE_STATE`、`TAILFILE_TOKEN_FILE`。
-
-Linux 上先装编译依赖（Ubuntu 24.04 的 GTK 4.14 即可）：
-
-```sh
-sudo apt install pkg-config libgtk-4-dev clang
-```
-
-`scripts/build-all.sh` 是构建与测试脚本，会运行 agent 测试、`gui-nsh` 测试以及多平台交叉编译。
-
-## 真实 tailnet
-
-在每台机器上，选择 agent 可以读取的文件夹和可以写入的文件夹。没有 `--write` 列表时节点为只读。没有 `--read` 列表时，agent 会创建 `~/Tailfile`（权限 `0700`；Windows 上是 `%USERPROFILE%\Tailfile`，即 PowerShell 中的 `$HOME\Tailfile`）并且只共享该目录。Demo 模式不使用这个默认值，而是共享临时测试数据目录。
-
-所有参数（agent 和 gui-nsh）统一写成双横线形式，如 `--read`、`--net`，也可以写成 `--read=PATH`。旧的单横线写法（`-read`、`-net`）仍然可用，因此已安装服务中的旧命令不受影响；`--help` 和新安装的服务只使用双横线。
-
-`--net` 决定 agent 如何加入 tailnet：
-
-| 取值 | 行为 |
-| --- | --- |
-| `auto`（默认） | 如果本地 tailscaled 响应其 LocalAPI、状态为 `Running` 且有 Tailscale IP，则使用 system 模式，否则内嵌 tsnet。日志会说明选择了哪种以及原因。 |
-| `system` | 使用本机已在运行的 tailscaled。不启动第二个节点。 |
-| `tsnet` | 内嵌一个 tailscale.com/tsnet 节点。它是独立于系统 tailscaled 的另一个节点。 |
-
-```sh
-# Prefer the machine's own tailscaled. No auth key.
-./tailfile-agent --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
-
-# Force an embedded node.
-export TS_AUTHKEY='tskey-auth-...'   # never commit this, never pass it on the command line if you can avoid it
-./tailfile-agent --net tsnet \
-  --hostname my-laptop \
-  --read "$HOME/Tailfile" \
-  --write "$HOME/Tailfile"
-```
-
-Windows（PowerShell）：
-
-```powershell
-# Prefer the machine's own tailscaled. No auth key.
-.\tailfile-agent.exe --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
-
-# Force an embedded node.
-$env:TS_AUTHKEY = 'tskey-auth-...'   # never commit this
-.\tailfile-agent.exe --net tsnet --hostname my-laptop --read "$HOME\Tailfile" --write "$HOME\Tailfile"
-```
-
-如果给 agent 传了 `--hostname` 或 `--state`，状态目录（以及其中的 `gui-token`）就不在默认位置，启动 GUI 时需要用 `--state`（或 `--token-file`）指向同一个目录。
-
-`--authkey` 参数仍然可用，但会打印警告。建议使用 `TS_AUTHKEY` 或 Settings 界面，这样 key 不会出现在 shell 历史和服务命令中。进程启动时的读取顺序是 `TS_AUTHKEY`，然后是 `--authkey`，最后是文件 `<state>/ts-authkey`。key 为空时，tsnet 会打印一个交互式登录 URL，用浏览器打开即可。保存或清除 key 不会重启已经运行的节点，需要重启 agent。本地 API 只返回是否配置了 key，从不返回 key 本身，key 也从不写入日志。
-
-状态保存在用户配置目录下的 `tailfile/<hostname>`（权限 `0700`），或 `--state` 指定的位置。不要提交该目录。
-
-| 操作系统 | 状态目录 |
-| --- | --- |
-| Linux | `~/.config/tailfile/<hostname>/` |
-| macOS | `~/Library/Application Support/tailfile/<hostname>/` |
-| Windows | `%AppData%\tailfile\<hostname>\` |
-
-Windows 上 `%AppData%` 即 `os.UserConfigDir()` 返回的 Roaming 目录，通常是 `C:\Users\<用户名>\AppData\Roaming`，PowerShell 中为 `$env:APPDATA`。例如：`Get-ChildItem "$env:APPDATA\tailfile"`。
-
-`<hostname>` 默认是 `tailfile-` 加上本机主机名。`gui-token` 在每次启动时重写（权限 `0600`；Windows 上 DACL 仅授权给当前用户）。`ts-authkey` 是保存的 auth key，权限相同，重启后保留。`jobs.json`、`transfers.json` 和 `service.json` 的权限也是 `0600`。System 模式不会创建 tailnet 节点密钥；`--hostname` 只用于命名状态目录。其他节点看到的名称是 tailscaled 原有的名称。
-
-System 模式只在节点的 Tailscale IPv4 和 IPv6 地址（`100.64.0.0/10` 和 `fd7a:115c:a1e0::/48`）上监听 `--port`（8644），从不绑定 `0.0.0.0`。如果这些地址变化或 tailscaled 重启，agent 会丢弃旧 socket 并绑定新地址。对其他 agent 的出站调用是普通的系统拨号，目标为 `100.x` / `fd7a::`，不走用户态网络栈。主机防火墙必须允许 Tailscale 接口（Linux 上为 `tailscale0`）的入站 TCP 8644。tsnet 模式在进程内部监听，因此主机防火墙看不到该端口。
-
-在 Linux 上，LocalAPI socket 通常只有 root 可访问。如果 system 模式（或 auto 模式的回退日志）提示无法读取 tailscaled，执行 `sudo tailscale set --operator=$USER`，然后以该用户身份重新启动 agent。在 macOS 上，auto 和 system 会同时尝试开源版 `tailscaled` 的 unix socket 以及 App Store / 独立版应用。
-
-无论哪种模式，agent 还会在 localhost 的 `127.0.0.1:8645` 上监听。本地监听器拒绝 `127.0.0.1`、`localhost` 或 `::1` 以外的任何地址（`0.0.0.0:8645` 和 `:8645` 都无法启动）。不要对外公开 8645 端口。
-
-每个 tailnet 请求都会通过 LocalAPI `WhoIs` 检查，无论该 LocalAPI 属于系统 tailscaled 还是内嵌的 tsnet 节点。在 agent 知道自己的 tailnet 用户之前，它会拒绝 tailnet 调用。之后只允许该用户访问，除非你通过 `--owner` 或 `TAILFILE_OWNER` 指定其他登录名。
-
-Tailscale grants 可以收窄（以及共享）访问权限。如果 WhoIs 的 `CapMap` 包含 `iori.dev/cap/tailfile`，则强制执行该 grant，不再要求同一用户检查。每个值都是 JSON：
-
-```json
-{"read": ["/home/ada/Tailfile"], "write": ["/home/ada/Tailfile/inbox"]}
-```
-
-grant 中的路径会与本节点的 `--read` 和 `--write` 列表取交集。列表之外的路径会被丢弃，因此 grant 无法扩大节点的共享范围。比已配置根目录更宽的 grant 会保留已配置的根目录。没有该 capability 时回退到同一用户规则。capability 存在但为空，或不是合法 JSON 时，一律拒绝（fail closed）。
-
-localhost API 是唯一可以导入、缓存或显示路径的地方。它不使用 WhoIs，而是要求每次 agent 启动时生成的 bearer token（32 个随机字节，十六进制），以权限 `0600` 写入 `<state dir>/gui-token`。日志行会给出该路径，但不打印 token。`gui-nsh` 读取该文件（或通过 `--token-file` / `--state` 指定），不设置 `Origin`（空 Origin 加上 bearer 是 agent 允许的原生客户端路径），请求走本机 HTTP。请求必须带 `Authorization: Bearer …`，`Host` 必须是回环地址。
-
-Settings 仅限本地。`GET /v1/local/settings` 返回解析后的网络模式（`system`、`tsnet` 或 `demo`）、请求的 `--net` 值以及 `authKeyConfigured`。`PUT /v1/local/settings/authkey` 携带 `{"authKey":"..."}` 会写入 `<state>/ts-authkey`。`DELETE /v1/local/settings/authkey` 会删除它。这两个写操作的响应都会设置 `restartRequired`，且不回显 key。tailnet 监听器不提供这些路由。
-
-`/v1/local/import` 只接受位于读取根目录内的系统路径（包括解析符号链接之后）。根目录以外的路径会被拒绝。
-
-复制是两个节点之一上的一个任务（job）。**Push** 表示源端读取自己的磁盘并写入目标端。**Pull** 表示目标端读取源端并写入自己的磁盘。分块大小为 1 MiB，每块有各自的 SHA-256。partial 文件（`*.tailfile-partial`）及其 meta（`*.tailfile-meta`，权限 `0600`）记录源文件大小、源文件 mtime，以及完成时的整文件 SHA-256。
-
-当目标路径已存在且是文件时，任务暂停，状态为 `conflict`。GUI 会询问 覆盖（overwrite）或 跳过（skip）。勾选 对后续冲突都这样处理 会把该选择保存为同一任务中后续文件的策略。没有明确选择时绝不替换文件。待处理的冲突、逐文件选择和"应用到后续"策略都保存在 `jobs.json` 中，因此重启后仍然有效。通过 `POST /v1/transfers/{id}/conflict`（GUI 发起的 push 或 pull）或 `POST /v1/jobs/{id}/conflict`（本地导入任务）作答：
-
-```json
-{"action": "overwrite", "applyToRest": false}
-```
-
-`action` 为 `overwrite` 或 `skip`。任务和传输记录保存在状态目录的 `jobs.json` 和 `transfers.json`（权限 `0600`）中，因此 agent 进程重启后 Resume 仍然可用。
-
-节点不会提权。它不能 sudo，也不会弹出 UAC 提示。它只能看到启动它的用户能看到的文件。
-
-## 按用户安装的服务
-
-```sh
-tailfile-agent service install|uninstall|start|stop|status [flags]
-```
-
-这只为当前用户安装服务，不需要 root 或管理员。`--system` 会被拒绝。
-
-### Linux
-
-用户 unit 为 `~/.config/systemd/user/tailfile-agent.service`。安装会执行 `systemctl --user enable` 和 daemon-reload。如果希望在没有人登录时也保持用户管理器（以及 agent）运行：
-
-```sh
-loginctl enable-linger "$USER"
-```
-
-### macOS
-
-LaunchAgent 为 `~/Library/LaunchAgents/tailfile-agent.plist`，带 `RunAtLoad`。没有 LaunchDaemon，也不需要 `sudo`。
-
-### Windows
-
-注册一个名为 `TailfileAgent` 的 Task Scheduler 登录任务（`schtasks /Create /XML`）：`RunLevel` 为 LeastPrivilege，交互式登录触发器，无执行时间限制。
-
-```sh
-./tailfile-agent service install --net system --read "$HOME/Tailfile" --write "$HOME/Tailfile"
-./tailfile-agent service status
-```
-
-`service install` 会注册并立即启动服务；启动失败时保留服务定义并以非零退出，修好原因后执行 `service start`。
-
-Windows（PowerShell，不需要以管理员身份运行）：
-
-```powershell
-.\tailfile-agent.exe service install --net system --read "$HOME\Tailfile" --write "$HOME\Tailfile"
-.\tailfile-agent.exe service status
-```
-
-### 安装脚本（本机或经 Tailscale SSH 装到另一台机器）
-
-```sh
-scripts/install-agent.sh --ssh <user>@<host>   # 远端 Linux/macOS，需开启 Tailscale SSH
-scripts/install-agent.sh                       # 本机
-```
-
-脚本按目标的 `uname -sm` 从本仓库交叉编译（需要 Go；或用 `--binary` 指定现成的二进制），经 `tailscale ssh` 上传到 `~/.local/bin/tailfile-agent` 并校验 sha256，然后以 `--net system --read ~/Tailfile --write ~/Tailfile` 安装并启动服务。可用 `--net`、`--read`、`--write`、`--read-only`、`--dest` 覆盖。已安装时只替换二进制并重启，原有参数不变。Linux 目标未开启 linger 时会提示。
-
-## 各操作系统的构建
-
-### Windows
-
-- 从 [go.dev](https://go.dev/dl/) 安装 Go 1.27.3，构建 `tailfile-agent.exe`。
-- 安装 [rustup](https://rustup.rs)，确保 **rustc >= 1.97**（可执行 `rustc --version` 检查，必要时 `rustup update stable`）。
-- 在 `gui-nsh` 中执行 `cargo build --release`，产物为 `gui-nsh\target\release\tailfile-nsh.exe`（已通过 `build.rs` 内嵌 Tailfile 图标资源）。窗口使用 Win32 + Direct2D 原生渲染，无需 GTK 或 WebView2。
-
-### macOS
-
-- 安装 Go 1.27.3、Xcode 命令行工具与 Rust（>= 1.97）：
-
+- [Tailscale](https://tailscale.com/) installed and signed in on each machine (Tailfile connects to the local `tailscaled` daemon by default via `--net system`).
+- **Linux**: if your local `tailscaled` socket is restricted to root, grant your user operator permission once:
   ```sh
-  cd gui-nsh && cargo build --release
-  ./target/release/tailfile-nsh --agent http://127.0.0.1:8645
+  sudo tailscale set --operator="$USER"
   ```
+- Trying the built-in 5-node offline demo (`tailfile --demo`) requires **no** Tailscale installation or network access.
 
-### Ubuntu / Debian
+## Installation
 
-```sh
-sudo apt install pkg-config libgtk-4-dev clang
-cd gui-nsh && cargo build --release
-```
+### Windows (PowerShell)
 
-### Arch / Omarchy（Hyprland，Wayland）
-
-```sh
-sudo pacman -S --needed base-devel gtk4 pkgconf clang
-cd gui-nsh && cargo build --release
-```
-
-## 本地文件缓存与拖入导入
-
-`gui-nsh` 里对文件右键「在访达中显示」（Windows：资源管理器，Linux：文件管理器），或选中后按 Enter，会先把远程文件下载到本地缓存（`POST /v1/local/cache`），再在文件管理器中显示（`POST /v1/local/reveal`：macOS 上 `open -R`，Windows 上 `explorer /select,`，Linux 上对父目录执行 `xdg-open`）。运行 agent 的本机上的文件不复制，直接显示原文件。
-
-缓存目录默认是 `os.UserCacheDir()/tailfile`（权限 `0700`），可以在 设置 → 传输 → 缓存目录 中修改。`PUT /v1/local/settings/cachedir` 携带 `{"cacheDir":"/abs/path"}` 切换目录（必须是绝对路径，不存在则创建；空字符串恢复默认），选择保存在 `<state>/cache-dir`，重启后仍然有效；自选目录保留它原有的权限。`GET /v1/local/settings` 返回 `cacheDir` 与 `cacheDirDefault`。`POST /v1/local/cache/open` 在文件管理器中打开当前缓存目录（不接受路径参数）。
-
-把系统本地文件直接拖进文件列表（`on_file_drop`）即可导入到当前远程目录。
-
-## sing-box（TUN）与 Tailscale
-
-- `100.64.0.0/10` 与 `fd7a:115c:a1e0::/48` 网段需设为 **direct**（直连）。
-- `--net tsnet` 时请为 `tailfile-agent` 设置进程直连。
-
-## 测试与形式化验证
-
-在仓库根目录执行。Linux / macOS：
-
-```sh
-(cd agent && go test -count=1 -race .)
-(cd gui-nsh && cargo test --lib --test demo_agent)
-```
-
-Windows（PowerShell）：
+Installs `tailfile.exe` into `%LOCALAPPDATA%\Tailfile`, verifies SHA-256 against `SHA256SUMS.txt`, adds it to your user `PATH`, and creates a Start Menu shortcut:
 
 ```powershell
-Push-Location agent; go test -count=1 .; Pop-Location
-Push-Location gui-nsh; cargo test --lib --test demo_agent; Pop-Location
+irm https://github.com/botmiao/tailfile/releases/latest/download/install.ps1 | iex
 ```
 
-此外，`gui-nsh/tests/formal_model_check.rs` 提供了显式状态广度优先搜索（BFS）模型检验器与有界路径输入验证（详见 `.cursor/skills/verify-gui-nsh-state-machine/SKILL.md`）：
+Optional environment overrides: `TAILFILE_VERSION=0.2.0`, `TAILFILE_INSTALL_DIR`, `TAILFILE_SERVICE=1` (also registers the per-user logon task).
+
+### Linux & macOS
+
+Installs `tailfile` into `~/.local/bin` and verifies SHA-256 against `SHA256SUMS.txt`:
 
 ```sh
-cargo test --manifest-path gui-nsh/Cargo.toml --test formal_model_check -- --nocapture
+curl -fsSL https://github.com/botmiao/tailfile/releases/latest/download/install.sh | sh
 ```
 
-## Native Shell UI 设计说明
+To install on a headless server and register the per-user background service (`systemd --user` or macOS `LaunchAgent`) in one step:
 
-详见 [docs/NSH_UI.md](docs/NSH_UI.md) 与 [docs/TESTING.md](docs/TESTING.md)。
+```sh
+curl -fsSL https://github.com/botmiao/tailfile/releases/latest/download/install.sh | sh -s -- --service -- --read /srv/share --write /srv/drop
+```
+
+Pass `--version <ver>`, `--prefix <dir>`, or `--help` after `sh -s --` to customize the installation.
+
+### Manual Download
+
+Download the archive for your OS/architecture and `SHA256SUMS.txt` directly from [GitHub Releases](https://github.com/botmiao/tailfile/releases/latest).
+
+## Key Features
+
+- **Single Binary, Zero Install Friction**:
+  - `tailfile` embeds the agent in-process over an in-memory transport (`memRoundTripper`), opening only the Tailnet peer port `:8644` with zero local `:8645` TCP listener or `gui-token` on disk, and closes to the desktop system tray so shares and transfers stay active in the background.
+  - Headless servers running `tailfile agent` or `tailfile service install` also open only `:8644` by default (pass `--local 127.0.0.1:8645` only when local loopback API attachment is needed).
+  - Default shared folder `~/Tailfile` is ready for reading and writing out of the box (pass `--read-only` or `--read` without `--write` to restrict writes).
+- **Direct Tailnet Transfers**: Point-to-point node copies with chunked resumable partial files (`.tailfile-partial`), SHA-256 verification, and non-dismissible file conflict prompts (`Overwrite` / `Skip` / `Cancel`, plus `Apply to all`).
+- **Scoped Security**: Reads and writes stay strictly within `--read` / `--write` roots (and Tailscale ACL `tailfile.dev/cap/files` capabilities when present); symlinks escaping shared roots are rejected, and `:8644` rejects browser CORS/Fetch headers (`Origin`, `Sec-Fetch-*`) as well as non-Tailnet `Host` headers.
+- **Native Desktop UI & Responsive Layout**:
+  - Light & Dark themes following system appearance or manual override, plus configurable layout density (`Auto`, `Compact`, `Standard`, `Comfortable`, persisted in `<StateDir>/ui.json`).
+  - Tabs (`Ctrl/Cmd+T` / `+` device picker, `Ctrl/Cmd+W` or middle-click close, `Ctrl/Cmd+Shift+T`, sidebar middle/right-click open in new tab), collapsible sidebar with lazy-loaded directory tree (`ui.Outline` with configurable single-root flattening and active-folder sync), breadcrumbs, List & Icon views with desktop marquee drag-selection, image/text/PDF previews, built-in UTF-8 plain-text editor (`Ctrl/Cmd+S`, `Ctrl/Cmd+F`, LF/CRLF preservation, read-only viewer on RO nodes), and OS drag-in/drag-out.
+  - **5-Node Offline Demo (`tailfile --demo`)**: Built-in sandbox with `alpha` (macOS, RW), `beta` (Windows, RW), `gamma` (Linux, RO), `pixel` (Android, RO), and `phone` (iOS, RO).
+
+## Quick Start
+
+### 1. Launch the Desktop App
+
+```sh
+tailfile
+```
+
+### 2. Try the 5-Node Interactive Demo
+
+```sh
+tailfile --demo
+```
+
+### 3. Run or Install on a Headless Server
+
+```sh
+# Install as a per-user background service (systemd --user / LaunchAgent / Windows Task Scheduler)
+tailfile service install --read /srv/share --write /srv/drop
+
+# Manage service lifecycle
+tailfile service status
+tailfile service stop
+tailfile service uninstall
+
+# Or run foreground in a terminal
+tailfile agent --read /srv/share --write /srv/drop
+```
+
+## CLI Reference
+
+| Command | Purpose |
+| --- | --- |
+| `tailfile [flags]` | Open native GUI (embeds agent in-process with desktop close-to-tray background sharing) |
+| `tailfile --demo` | Open GUI with isolated 5-node in-memory demo Tailnet |
+| `tailfile agent [flags]` | Run headless background agent (`:8644` on Tailnet; loopback API off unless `--local` is set) |
+| `tailfile service <install\|uninstall\|start\|stop\|status> [flags]` | Manage per-user background daemon without root/admin privileges |
+| `tailfile version` / `--version` | Print Tailfile version (`0.2.0`) |
+| `tailfile help` / `--help` | Show CLI usage and flags |
+
+### Common Flags
+
+- `--read <paths>` / `--write <paths>`: Comma-separated read/write shared directory roots (default `~/Tailfile` RW)
+- `--read-only`: Disable writes even on default `~/Tailfile`
+- `--net <system\|tsnet>`: Use existing local `tailscaled` (`system`, default); `--net tsnet` (with `--authkey` / `--ephemeral`) is experimental and opt-in only via CLI flags
+- `--hostname <name>`, `--state <dir>`, `--port <8644>`, `--local <127.0.0.1:8645>` (`--local` disabled by default)
+- `--authkey <key>` (or `TS_AUTHKEY`), `--owner <login>` (or `TAILFILE_OWNER`): Optional owner login or experimental `tsnet` auth key
+- `--agent <url>` (or `TAILFILE_AGENT`), `--attach-only`, `--token-file <path>`: GUI external-daemon options
+
+## Building from Source
+
+Requires Go 1.27+ (`CGO_ENABLED=0`, no WebView runtime or C toolchain required for desktop builds).
+
+**Windows (PowerShell)**
+
+```powershell
+# Regenerate Windows PE resources (rsrc_windows_*.syso) if resources/icon.png or mygo.json changes
+go generate .
+
+$env:CGO_ENABLED = "0"
+go build -tags mygo_nowebview -ldflags "-s -w -H=windowsgui" -o tailfile.exe .
+```
+
+**Linux / macOS (Bash)**
+
+```sh
+CGO_ENABLED=0 go build -tags mygo_nowebview -ldflags "-s -w" -o tailfile .
+
+# Or cross-compile and package all 6 desktop release archives into ./dist
+bash scripts/build-all.sh
+```
+
+**Run Tests**
+
+```sh
+go test -count=1 ./...
+```
+
+## Documentation
+
+- [UI Design & Architecture](docs/UI.md)
+- [Testing & Verification Guide](docs/TESTING.md)
+- [Implementation Notes](docs/IMPLEMENTATION_NOTES.md)
+- [Changelog](CHANGELOG.md)
+
+## License
+
+[MIT](LICENSE)

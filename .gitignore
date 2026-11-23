@@ -1,18 +1,18 @@
 /bin/
 /dist/
+/build/
 /build-out/
 /agent-tools/
+/tailfile
 *.exe
+*.exe~
 *.test
 .DS_Store
-
-# Native Shell (gui-nsh) build output
-gui-nsh/target/
 
 # Agent state and demo caches (node keys live here — never commit)
 **/.tailfile-state/
 **/tailscaled.state
 *.tsbuildinfo
 
-# Go workspace checksum cache
-go.work.sum
+# Verification proof artifacts (retained across cleanup; local-only)
+/.verify-proof/
