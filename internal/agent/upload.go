@@ -106,8 +106,9 @@ func (u *Uploads) Start(roots Roots, path string, size int64, mtimeUnix int64, r
 	defer u.mu.Unlock()
 
 	for _, existing := range u.items {
-		if uploadMatches(existing.meta, dest, size, mtimeUnix, resumeID) {
-			return existing.snapshot(), nil
+		snap, closed := existing.snapshotState()
+		if !closed && uploadMatches(snap, dest, size, mtimeUnix, resumeID) {
+			return snap, nil
 		}
 	}
 	if raw, err := os.ReadFile(metaPath); err == nil {
@@ -212,6 +213,9 @@ func (u *Uploads) Put(id string, offset int64, data []byte, sumHex string) (int6
 	if up.meta.Complete {
 		return 0, statusErr(409, "upload already finished")
 	}
+	if up.closed {
+		return 0, statusErr(404, "upload not found")
+	}
 	if offset != up.meta.Offset {
 		if offset >= 0 && offset+int64(len(data)) <= up.meta.Offset {
 			return up.meta.Offset, nil
@@ -259,9 +263,19 @@ func (u *Uploads) Finish(id string, sha256hex string) (Upload, error) {
 		return Upload{}, statusErr(404, "upload not found")
 	}
 	up.mu.Lock()
-	defer up.mu.Unlock()
+	upLocked := true
+	unlockUp := func() {
+		if upLocked {
+			upLocked = false
+			up.mu.Unlock()
+		}
+	}
+	defer unlockUp()
 	if up.meta.Complete {
 		return up.meta, nil
+	}
+	if up.closed {
+		return Upload{}, statusErr(404, "upload not found")
 	}
 	if up.meta.Size >= 0 && up.meta.Offset != up.meta.Size {
 		return Upload{}, statusErr(409, "have %d of %d bytes", up.meta.Offset, up.meta.Size)
@@ -280,10 +294,9 @@ func (u *Uploads) Finish(id string, sha256hex string) (Upload, error) {
 		}
 		os.Remove(up.data)
 		os.Remove(up.metaP)
-		id := up.meta.ID
-		u.mu.Lock()
-		delete(u.items, id)
-		u.mu.Unlock()
+		upID := up.meta.ID
+		unlockUp()
+		u.removeIfSame(upID, up)
 		return Upload{}, statusErr(400, "whole-file sha256 mismatch")
 	}
 	up.meta.SHA256 = strings.ToLower(want)
@@ -304,19 +317,18 @@ func (u *Uploads) Finish(id string, sha256hex string) (Upload, error) {
 	// has already deleted the partial and returned.
 	if err := replaceFile(up.data, up.meta.Path); err != nil {
 		// Drop the half-closed session and temp partial so locked files do not leave strays.
-		u.mu.Lock()
-		delete(u.items, id)
-		u.mu.Unlock()
 		os.Remove(up.data)
 		os.Remove(up.metaP)
+		unlockUp()
+		u.removeIfSame(id, up)
 		return Upload{}, err
 	}
 	os.Remove(up.metaP)
 	up.meta.Complete = true
-	u.mu.Lock()
-	delete(u.items, id)
-	u.mu.Unlock()
-	return up.meta, nil
+	meta := up.meta
+	unlockUp()
+	u.removeIfSame(id, up)
+	return meta, nil
 }
 
 // Close closes any open partial file handles held by active upload sessions.
@@ -350,8 +362,12 @@ func (u *Uploads) Abort(id string) error {
 	}
 	up.mu.Lock()
 	defer up.mu.Unlock()
-	if up.file != nil && !up.closed {
+	if up.meta.Complete || up.closed {
+		return nil
+	}
+	if up.file != nil {
 		up.file.Close()
+		up.closed = true
 	}
 	os.Remove(up.data)
 	os.Remove(up.metaP)
@@ -362,6 +378,20 @@ func (up *upload) snapshot() Upload {
 	up.mu.Lock()
 	defer up.mu.Unlock()
 	return up.meta
+}
+
+func (up *upload) snapshotState() (Upload, bool) {
+	up.mu.Lock()
+	defer up.mu.Unlock()
+	return up.meta, up.closed
+}
+
+func (u *Uploads) removeIfSame(id string, up *upload) {
+	u.mu.Lock()
+	if u.items[id] == up {
+		delete(u.items, id)
+	}
+	u.mu.Unlock()
 }
 
 func (up *upload) persist() error {
@@ -391,16 +421,19 @@ func uploadMatches(m Upload, dest string, size, mtime int64, resumeID string) bo
 	return true
 }
 
+// discardPath must be called with u.mu held.
 func (u *Uploads) discardPath(dest, dataPath, metaPath string) {
 	for id, existing := range u.items {
-		if existing.meta.Path != dest || existing.meta.Complete {
-			continue
-		}
-		if existing.file != nil && !existing.closed {
+		existing.mu.Lock()
+		match := existing.meta.Path == dest && !existing.meta.Complete
+		if match && existing.file != nil && !existing.closed {
 			existing.file.Close()
 			existing.closed = true
 		}
-		delete(u.items, id)
+		existing.mu.Unlock()
+		if match {
+			delete(u.items, id)
+		}
 	}
 	os.Remove(dataPath)
 	os.Remove(metaPath)
